@@ -318,6 +318,10 @@ struct LegacyExplParticleBridgeState {
   std::uint8_t red{};
   std::uint8_t green{};
   std::uint8_t blue{};
+  // The retail controller selected the attached EXPL000..007 sequence, not
+  // the free EXPL000..011 explosion. This is provenance only: authored CFIRE
+  // ownership still requires an exact source or unique emitter match.
+  bool attached_explosion_sequence{};
   // Stable EXPL pool identity. Camera-list GsSPRITE provenance uses the same
   // index, allowing presentation to suppress only the exact represented
   // particle without changing the bridge ABI/layout.

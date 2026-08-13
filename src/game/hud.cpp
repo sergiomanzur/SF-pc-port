@@ -23,6 +23,7 @@ weaponIcon(std::string_view first = {}, std::string_view second = {},
 constexpr double aim_reticle_reference_projection = 320.0;
 constexpr double aim_reticle_reference_depth = 3072.0;
 constexpr double aim_reticle_reference_scale = 0.8;
+constexpr double aim_reticle_target_lock_minimum_scale = 0.4;
 constexpr double aim_reticle_minimum_scale = 0.08;
 constexpr double aim_reticle_maximum_scale = 2.4;
 
@@ -444,6 +445,12 @@ double originalAimReticleScale(std::int32_t projection,
           aim_reticle_reference_projection * aim_reticle_reference_depth /
           view_depth,
       aim_reticle_minimum_scale, aim_reticle_maximum_scale);
+}
+
+double originalTargetLockReticleScale(std::int32_t projection,
+                                      double view_depth) noexcept {
+  return std::max(aim_reticle_target_lock_minimum_scale,
+                  originalAimReticleScale(projection, view_depth));
 }
 
 OriginalAimReticleGeometry

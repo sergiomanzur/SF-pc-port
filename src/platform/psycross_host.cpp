@@ -4,6 +4,7 @@
 #include "psycross_mission_start.hpp"
 #include "psycross_movie_player.hpp"
 #include "psycross_scene_viewer.hpp"
+#include "volumetric_atlas_texture.hpp"
 #include "psycross_video_mode.hpp"
 #include "psycross_window_mode.hpp"
 
@@ -16,6 +17,7 @@
 
 #include <PsyX/PsyX_globals.h>
 #include <PsyX/PsyX_public.h>
+#include <PsyX/PsyX_render.h>
 #include <SDL.h>
 #include <psx/libetc.h>
 #include <psx/libgpu.h>
@@ -55,7 +57,7 @@ void configureGraphics(const GraphicsSettings &settings) noexcept {
   g_cfg_trilinearFiltering = settings.trilinear_filtering ? 1 : 0;
   g_cfg_anisotropicFiltering = settings.anisotropic_filtering ? 1 : 0;
   g_cfg_smaa = settings.smaa ? 1 : 0;
-  g_cfg_volumetricFog = settings.volumetric_fog ? 1 : 0;
+  g_cfg_volumetricEffects = settings.volumetric_effects ? 1 : 0;
   g_cfg_aspectMode = settings.aspect_ratio == AspectRatioMode::adaptive
                          ? PSYX_ASPECT_ADAPTIVE
                          : PSYX_ASPECT_ORIGINAL_4_3;
@@ -99,6 +101,18 @@ void configurePresentation(const GraphicsSettings &settings) noexcept {
   PsyX_EnableSwapInterval(settings.vsync ? 1 : 0);
   PsyX_SetSwapInterval(1);
   PsyX_SetFrameLimit(static_cast<int>(settings.frame_limit));
+  if (settings.volumetric_effects) {
+    using namespace detail::volumetric_atlas_texture;
+    static_assert(rgba.size() == static_cast<std::size_t>(width) * height * 4U);
+    if (GR_UploadVolumetricDensityAtlas(
+            static_cast<int>(width), static_cast<int>(height), rgba.data()) ==
+        0) {
+      // The renderer keeps its procedural volume path, and ultimately the
+      // exact retail sprite fallback, if the authored atlas cannot upload.
+      PsyX_Log_Warning(
+          "Volumetric density atlas is unavailable; using procedural shapes\n");
+    }
+  }
 }
 
 void configureInput() {
@@ -816,7 +830,8 @@ public:
                                                campaign->difficulty(),
                                                graphics_.controller_bindings,
                                                graphics_.controller_vibration,
-                                               commit_controller_settings};
+                                               commit_controller_settings,
+                                               graphics_.mission_skyboxes};
       std::optional<game::MissionPackage> loaded_mission;
       auto exit_application = false;
       while (campaign->active()) {
@@ -1065,7 +1080,8 @@ public:
                                              game::CampaignDifficulty::original,
                                              graphics_.controller_bindings,
                                              graphics_.controller_vibration,
-                                             commit_controller_settings};
+                                             commit_controller_settings,
+                                             graphics_.mission_skyboxes};
     const auto result = scene_viewer.run(mission_, pad, previous_buttons,
                                          cue_path_, mission_.definition().index,
                                          mission_start.takePreloadedGameplay(),

@@ -12,6 +12,32 @@
 #include <utility>
 
 namespace sf::game {
+
+bool validDynamicLightAppearance(
+    const DynamicLightAppearance &appearance) noexcept {
+  constexpr auto minimum_scale = 1.0 / 16.0;
+  constexpr auto maximum_scale = 8.0;
+  if (!std::isfinite(appearance.radius_scale) ||
+      !std::isfinite(appearance.intensity_scale) ||
+      appearance.radius_scale < minimum_scale ||
+      appearance.radius_scale > maximum_scale ||
+      appearance.intensity_scale < minimum_scale ||
+      appearance.intensity_scale > maximum_scale) {
+    return false;
+  }
+  if (!appearance.color) {
+    return true;
+  }
+  constexpr auto maximum_authored_channel = 2.0;
+  const auto valid_channel = [](double channel) {
+    return std::isfinite(channel) && channel >= 0.0 &&
+           channel <= maximum_authored_channel;
+  };
+  return valid_channel(appearance.color->red) &&
+         valid_channel(appearance.color->green) &&
+         valid_channel(appearance.color->blue);
+}
+
 namespace {
 
 struct LightProfile {
@@ -162,6 +188,20 @@ dynamicLightResponseTable() noexcept {
   return result;
 }
 
+[[nodiscard]] LightProfile
+applyAppearance(LightProfile fallback,
+                const DynamicLightAppearance &appearance) noexcept {
+  if (!validDynamicLightAppearance(appearance)) {
+    return fallback;
+  }
+  if (appearance.color) {
+    fallback.color = *appearance.color;
+  }
+  fallback.radius *= appearance.radius_scale;
+  fallback.intensity *= appearance.intensity_scale;
+  return fallback;
+}
+
 [[nodiscard]] bool finite(DynamicLightPoint point) noexcept {
   return std::isfinite(point.x) && std::isfinite(point.y) &&
          std::isfinite(point.z);
@@ -189,8 +229,9 @@ makePersistent(const PersistentDynamicLightState &source,
       !finite(source.position)) {
     return std::nullopt;
   }
-  const auto light_profile =
-      animatedProfile(source.kind, source.source_id, animation_tick);
+  const auto light_profile = applyAppearance(
+      animatedProfile(source.kind, source.source_id, animation_tick),
+      source.appearance);
   return DynamicLight{source.kind,
                       source.position,
                       light_profile.color,
@@ -229,7 +270,7 @@ makeTransient(const TransientDynamicLightState &source) noexcept {
     return std::nullopt;
   }
 
-  const auto light_profile = profile(kind);
+  const auto light_profile = applyAppearance(profile(kind), source.appearance);
   const auto scale = std::clamp(source.scale, 0.25, 4.0);
   const auto lifetime = static_cast<double>(source.remaining_updates) /
                         static_cast<double>(source.total_updates);
@@ -312,7 +353,8 @@ struct SelectedLight {
   return candidate.source_order < resident.source_order;
 }
 
-void consider(std::array<SelectedLight, maximum_dynamic_lights> &selected,
+template <std::size_t Capacity>
+void consider(std::array<SelectedLight, Capacity> &selected,
               std::size_t &count, DynamicLight light,
               DynamicLightPoint observer, std::size_t source_order) noexcept {
   const auto candidate = SelectedLight{
@@ -330,6 +372,16 @@ void consider(std::array<SelectedLight, maximum_dynamic_lights> &selected,
   if (better(candidate, selected[worst])) {
     selected[worst] = candidate;
   }
+}
+
+[[nodiscard]] bool
+bakedWorldLightEligible(const DynamicLight &light) noexcept {
+  if (light.transient || light.directional) {
+    return true;
+  }
+  return light.kind == DynamicLightKind::street_lamp ||
+         light.kind == DynamicLightKind::police_lightbar ||
+         light.kind == DynamicLightKind::steady_fire;
 }
 
 [[nodiscard]] std::int32_t arithmeticShiftRight(std::int32_t value,
@@ -633,6 +685,58 @@ sampleSceneTriangleLighting(std::array<DynamicLightPoint, 3U> vertices,
   };
 }
 
+FlamethrowerDynamicLightSamples flamethrowerDynamicLightSamples(
+    std::span<const FlamethrowerLightSegment> segments) noexcept {
+  auto result = FlamethrowerDynamicLightSamples{};
+  const auto valid = [](const FlamethrowerLightSegment &segment) {
+    return finite(segment.first) && finite(segment.second) &&
+           squaredDistance(segment.first, segment.second) > 0.000001;
+  };
+  const auto valid_count = static_cast<std::size_t>(
+      std::ranges::count_if(segments, valid));
+  result.count = std::min(valid_count, result.lights.size());
+  if (result.count == 0U) {
+    return result;
+  }
+
+  const auto target_ordinal = [&](std::size_t sample) {
+    if (result.count == 1U) {
+      return std::size_t{};
+    }
+    const auto intervals = result.count - 1U;
+    const auto source_intervals = valid_count - 1U;
+    return sample * (source_intervals / intervals) +
+           sample * (source_intervals % intervals) / intervals;
+  };
+  for (std::size_t sample = 0U; sample < result.count; ++sample) {
+    const auto target = target_ordinal(sample);
+    auto ordinal = std::size_t{};
+    const auto source =
+        std::ranges::find_if(segments, [&](const auto &segment) {
+          if (!valid(segment)) {
+            return false;
+          }
+          return ordinal++ == target;
+        });
+    if (source == segments.end()) {
+      result.count = sample;
+      break;
+    }
+    result.lights[sample] = TransientDynamicLightState{
+        GameplayEffectType::burning_fire,
+        {(source->first.x + source->second.x) * 0.5,
+         (source->first.y + source->second.y) * 0.5,
+         (source->first.z + source->second.z) * 0.5},
+        source->source_id,
+        1.35,
+        1U,
+        1U,
+        true,
+    };
+  }
+  return result;
+}
+
 DynamicLightFrame buildDynamicLightFrame(
     std::span<const PersistentDynamicLightState> persistent,
     std::span<const TransientDynamicLightState> transient,
@@ -678,16 +782,30 @@ DynamicLightFrame buildDynamicLightFrame(
 }
 
 DynamicLightFrame
-dynamicLightFrameForBakedWorld(const DynamicLightFrame &frame) noexcept {
+dynamicLightFrameForBakedWorld(const DynamicLightFrame &frame,
+                               DynamicLightPoint observer) noexcept {
   auto result = DynamicLightFrame{};
+  if (!finite(observer)) {
+    return result;
+  }
+
+  std::array<SelectedLight, maximum_baked_world_dynamic_lights> selected{};
+  auto count = std::size_t{};
+  auto source_order = std::size_t{};
   for (const auto &light : frame.active()) {
-    if (!light.transient && !light.directional) {
-      continue;
+    if (bakedWorldLightEligible(light)) {
+      consider(selected, count, light, observer, source_order);
     }
-    if (result.count >= result.lights.size()) {
-      break;
-    }
-    result.lights[result.count++] = light;
+    ++source_order;
+  }
+
+  std::sort(selected.begin(), selected.begin() + count,
+            [](const SelectedLight &first, const SelectedLight &second) {
+              return first.source_order < second.source_order;
+            });
+  result.count = count;
+  for (std::size_t index = 0U; index < count; ++index) {
+    result.lights[index] = selected[index].light;
   }
   return result;
 }

@@ -27,8 +27,11 @@ Release-specific changes and checksums are published with each release. See
 
 3. Extract the ZIP into a new folder.
 4. Run `syphon_filter.exe`.
-5. Select **BROWSE**, choose the CUE file for *Syphon Filter* USA v1.1, configure
-   graphics, controls and **Text language**, then select **DEPLOY**.
+5. On **Launch**, select **Browse** and choose the CUE file for *Syphon Filter*
+   USA v1.1. Review **Graphics** and **Controls**, then select **Play**.
+
+The single-window launcher also includes the **Dossiers** gallery. Its complete
+interface is available in English and Russian.
 
 Keep every BIN file next to its CUE file and do not rename the files referenced
 by the CUE sheet. The launcher remembers the selected image but never copies it
@@ -54,8 +57,11 @@ revisions, repacks and modified images are not expected to work.
 - Original R3000A mission/gameplay execution with native Windows presentation.
 - Complete 20-mission campaign flow, checkpoint restore and persistent mission
   unlock progress.
-- Integrated English launcher with game-image selection, arbitrary internal
-  resolution, aspect mode, fullscreen, MSAA, bilinear and anisotropic filtering.
+- Modular single-window launcher with **Launch**, **Graphics**, **Controls** and
+  **Dossiers** tabs. The complete launcher UI is available in English and
+  Russian and keeps all settings staged until **Play**.
+- Configurable internal resolution, aspect mode, fullscreen, frame pacing,
+  texture filtering, SMAA/MSAA and optional volumetric particle effects.
 - Optional Russian text pack for all 20 missions, menus, briefings,
   weapon descriptions and baked map labels, with a unified Industry Bold 2x
   pixel atlas matching the original Industria-style interface for Latin and
@@ -77,7 +83,7 @@ revisions, repacks and modified images are not expected to work.
 - Weapon muzzle flashes for player and enemy weapons, with first-person behavior
   matching the current camera mode.
 - Restored glass/window destruction shards and restart-safe destructible state.
-- Launcher DOSSIERS gallery with four sharpened bonus pages.
+- Integrated **Dossiers** tab with four sharpened bonus pages.
 
 The implementation is still a public test. Gameplay remains driven by the guest
 runtime; rendering, platform integration and selected presentation systems are
@@ -103,9 +109,10 @@ excluded from release artifacts.
 
 ## Controls
 
-The launcher exposes all native actions and saves remapped bindings in
-`%LOCALAPPDATA%\SyphonFilterPC\launcher.ini`. Default keyboard/mouse and controller
-bindings are documented in [docs/CONTROLS.md](docs/CONTROLS.md).
+The **Controls** tab exposes all native keyboard, mouse and controller actions,
+controller backend selection, stick layout and vibration. Remapped bindings are
+saved in `%LOCALAPPDATA%\SyphonFilterPC\launcher.ini`. Defaults and rebinding are
+documented in [docs/CONTROLS.md](docs/CONTROLS.md).
 
 Useful window controls:
 
@@ -180,6 +187,7 @@ Selected options can also be specified directly:
 --anisotropic | --no-anisotropic
 --smaa | --no-smaa
 --aspect-adaptive | --aspect-4-3
+--volumetric-effects | --no-volumetric-effects
 --vsync | --no-vsync
 --fps-limit=0|20..1000
 --language=en | --language=ru

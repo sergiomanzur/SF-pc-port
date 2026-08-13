@@ -1,4 +1,4 @@
-#include "sf/assets/emd_scene.hpp"
+﻿#include "sf/assets/emd_scene.hpp"
 #include "sf/assets/fog_archive.hpp"
 #include "sf/assets/gmd_model.hpp"
 #include "sf/assets/hmd_animation.hpp"
@@ -32,12 +32,13 @@
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
 #include "sf/platform/optic_history.hpp"
 #include "sf/platform/player_camera_fade.hpp"
+#include "sf/platform/persistent_fire_volume.hpp"
 #include "sf/platform/presentation_frame_meter.hpp"
 #include "sf/platform/retail_depth_cue.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/platform/retail_ui_presentation.hpp"
 #include "sf/platform/retail_vertex_light_presentation.hpp"
-#include "sf/platform/world_chunk_appearance.hpp"
+#include "sf/platform/world_render_envelope.hpp"
 #include "sf/psx/executable.hpp"
 #include "sf/psx/function_map.hpp"
 
@@ -335,10 +336,8 @@ void testEmdScene() {
   }};
   for (std::size_t index = 0; index < 4; ++index) {
     writeLe16(bytes, vertex_offset + index * 8U, coordinates[index][0]);
-    writeLe16(bytes, vertex_offset + index * 8U + 2U,
-              coordinates[index][1]);
-    writeLe16(bytes, vertex_offset + index * 8U + 4U,
-              coordinates[index][2]);
+    writeLe16(bytes, vertex_offset + index * 8U + 2U, coordinates[index][1]);
+    writeLe16(bytes, vertex_offset + index * 8U + 4U, coordinates[index][2]);
     writeLe16(bytes, vertex_offset + index * 8U + 6U, 0x4210U);
   }
 
@@ -368,6 +367,24 @@ void testEmdScene() {
   require(resolved_mask &&
               *resolved_mask == (scene.texturePageMask() | (1U << 7U)),
           "EMD selective texture-page mask mismatch");
+
+  auto duplicated_packet = bytes;
+  duplicated_packet.insert(duplicated_packet.begin() + vertex_offset, 16U,
+                           std::byte{});
+  writeLe16(duplicated_packet, section_offset + 4U, 4U);
+  writeLe32(duplicated_packet, section_offset + 0x24U, 0x6cU);
+  writeLe32(duplicated_packet, section_offset + 0x5cU, 0x85404060U);
+  writeLe32(duplicated_packet, section_offset + 0x60U, 0x03870000U);
+  writeLe32(duplicated_packet, section_offset + 0x64U, 0x06000009U);
+  const auto duplicate_scene =
+      sf::assets::EmdScene::parse(duplicated_packet);
+  const auto &duplicate_polygons =
+      duplicate_scene.sections().front().polygons;
+  require(duplicate_polygons.size() == 4U &&
+              duplicate_polygons.front().renderable &&
+              !duplicate_polygons.back().renderable &&
+              duplicate_polygons.back().duplicate,
+          "EMD exact presentation duplicate was not suppressed");
 
   // The retail header reserves 0x04..0x7f for section offsets. The words at
   // 0x80 and 0x84 point to linked-light metadata and must never become fake
@@ -505,6 +522,86 @@ void testGmdModel() {
     require(error.code() == sf::core::ErrorCode::invalid_format,
             "Truncated GMD normals returned the wrong error code");
   }
+
+  auto missing_authored_normals = bytes;
+  std::fill(missing_authored_normals.begin() + 0x48,
+            missing_authored_normals.begin() + 0x58, std::byte{});
+  const auto generated_model =
+      sf::assets::GmdModel::parse(missing_authored_normals);
+  require(!model.usesGeneratedCornerNormals() &&
+              generated_model.usesGeneratedCornerNormals() &&
+              generated_model.generatedCornerNormals().size() ==
+                  generated_model.triangles().size(),
+          "GMD generated normals replaced authored data or were not prepared");
+
+  const std::array smooth_vertices{
+      sf::assets::GmdVertex{0, 0, 0}, sf::assets::GmdVertex{100, 0, 0},
+      sf::assets::GmdVertex{0, 100, 0}, sf::assets::GmdVertex{-100, 0, 100},
+  };
+  const auto make_triangle = [](std::array<std::uint8_t, 3> indices,
+                                std::uint16_t texture_page = 1U) {
+    auto triangle = sf::assets::GmdTriangle{};
+    triangle.vertex_indices = indices;
+    triangle.uv = {sf::assets::EmdUv{0U, 0U},
+                   sf::assets::EmdUv{16U, 0U},
+                   sf::assets::EmdUv{0U, 16U}};
+    triangle.clut = 2U;
+    triangle.texture_page = texture_page;
+    triangle.flags = 1U;
+    return triangle;
+  };
+  std::array smooth_triangles{
+      make_triangle({0U, 1U, 2U}),
+      make_triangle({0U, 2U, 3U}),
+  };
+  smooth_triangles[1].uv[1] = smooth_triangles[0].uv[2];
+  const auto smooth = sf::assets::prepareGmdFallbackNormals(
+      smooth_vertices, smooth_triangles);
+  require(smooth.size() == 2U && smooth[0][0].x > 0.30 &&
+              smooth[0][0].z > 0.80 && smooth[1][0].x > 0.30 &&
+              smooth[1][0].z > 0.80,
+          "GMD crease-angle smoothing did not blend a compatible curved edge");
+
+  auto uv_seam_triangles = smooth_triangles;
+  uv_seam_triangles[1].uv[0].u = 8U;
+  const auto uv_seam = sf::assets::prepareGmdFallbackNormals(
+      smooth_vertices, uv_seam_triangles);
+  require(std::abs(uv_seam[0][0].x) < 0.000001 &&
+              uv_seam[0][0].z > 0.999,
+          "GMD normal smoothing crossed an authored UV seam");
+
+  auto material_seam_triangles = smooth_triangles;
+  material_seam_triangles[1].texture_page = 3U;
+  const auto material_seam = sf::assets::prepareGmdFallbackNormals(
+      smooth_vertices, material_seam_triangles);
+  require(std::abs(material_seam[0][0].x) < 0.000001 &&
+              material_seam[0][0].z > 0.999,
+          "GMD normal smoothing crossed a material seam");
+
+  const std::array hard_vertices{
+      sf::assets::GmdVertex{0, 0, 0}, sf::assets::GmdVertex{100, 0, 0},
+      sf::assets::GmdVertex{0, 100, 0}, sf::assets::GmdVertex{0, 0, 100},
+  };
+  const auto hard = sf::assets::prepareGmdFallbackNormals(
+      hard_vertices, smooth_triangles);
+  require(std::abs(hard[0][0].x) < 0.000001 && hard[0][0].z > 0.999 &&
+              hard[1][0].x > 0.999 && std::abs(hard[1][0].z) < 0.000001,
+          "GMD normal smoothing rounded a hard 90-degree crease");
+
+  const std::array duplicated_seam_vertices{
+      sf::assets::GmdVertex{0, 0, 0}, sf::assets::GmdVertex{100, 0, 0},
+      sf::assets::GmdVertex{0, 100, 0}, sf::assets::GmdVertex{0, 0, 0},
+      sf::assets::GmdVertex{-100, 0, 100},
+  };
+  const std::array duplicated_seam_triangles{
+      make_triangle({0U, 1U, 2U}),
+      make_triangle({3U, 2U, 4U}),
+  };
+  const auto duplicated_seam = sf::assets::prepareGmdFallbackNormals(
+      duplicated_seam_vertices, duplicated_seam_triangles);
+  require(std::abs(duplicated_seam[0][0].x) < 0.000001 &&
+              duplicated_seam[0][0].z > 0.999,
+          "GMD normal smoothing welded a duplicated silhouette vertex");
 }
 
 void testCfireSpawnPoint() {
@@ -547,6 +644,52 @@ void testCfireSpawnPoint() {
   require(sf::game::cfireSpawnPoint(negative_basis) ==
               sf::game::EffectPoint{10, -132, 30},
           "CFIRE origin must not depend on the authored basis");
+}
+
+void testPersistentFireVolumeLayout() {
+  const auto layout = sf::platform::persistentFireVolumeLayout(
+      10.0, 20.0, 30.0, 4.0, 8.0, 4.0);
+  require(layout.center_x == 10.0 && layout.center_y == 12.0 &&
+              layout.center_z == 30.0 && layout.radius_x == 4.0 &&
+              layout.radius_y == 8.0 && layout.radius_z == 4.0,
+          "Persistent fire volume did not retain authored extents");
+  require(layout.center_y + layout.radius_y == 20.0,
+          "Persistent fire volume moved below its authored base");
+
+  const auto thin = sf::platform::persistentFireVolumeLayout(
+      10.0, 20.0, 30.0, 100.0, 160.0, 2.0);
+  require(thin.radius_z ==
+              thin.radius_x *
+                  sf::platform::persistent_fire_minimum_depth_ratio,
+          "Persistent fire volume collapsed into a camera-facing plane");
+
+  const auto first = sf::platform::persistentFireVolumeSeed(7U);
+  require(first == sf::platform::persistentFireVolumeSeed(7U) &&
+              first != sf::platform::persistentFireVolumeSeed(8U),
+          "Persistent fire emitter seed is not stable per source identity");
+
+  const auto minimum = sf::platform::persistentFireVolumeLayout(
+      1.0, 2.0, 3.0, 0.0, -4.0, 0.0);
+  require(minimum.radius_x == 1.0 && minimum.radius_y == 1.0 &&
+              minimum.radius_z == 1.0 &&
+              minimum.center_y + minimum.radius_y == 2.0,
+          "Persistent fire volume accepted a degenerate envelope");
+
+  require(sf::platform::persistentFireSourceMatchesSceneObject(
+              10U, 42, 42, 900U) &&
+              !sf::platform::persistentFireSourceMatchesSceneObject(
+                  10U, 42, 41, 42U),
+          "A live CFIRE guest binding lost identity authority");
+  require(sf::platform::persistentFireSourceMatchesSceneObject(
+              1U, 53, -1, 53U) &&
+              !sf::platform::persistentFireSourceMatchesSceneObject(
+                  2U, 53, -1, 53U) &&
+              !sf::platform::persistentFireSourceMatchesSceneObject(
+                  1U, -1, -1, 53U) &&
+              !sf::platform::persistentFireSourceMatchesSceneObject(
+                  1U, 53, 99, 53U),
+          "Destroyed Subway CFIRE fallback escaped its exact unbound source "
+          "identity");
 }
 
 void testLegacyEffectSpriteLayouts() {
@@ -601,22 +744,23 @@ void testRetailVertexLightPresentation() {
   sf::platform::interpolateRetailVertexLights(previous, current, 0.5, result);
   const auto midpoint_signature =
       sf::platform::retailVertexLightPresentationSignature(result, 320);
-  require(result.size() == current.size() && result[0].source == fixed.source &&
-              result[1].source == rotating.source &&
-              result[1].matrix.rotation[0] == 2048 &&
-              result[1].matrix.rotation[2] == 2048 &&
-              result[1].matrix.rotation[6] == -2048 &&
-              result[1].matrix.rotation[8] == 2048 &&
-              result[1].matrix.translation.z == -2556 &&
-              result[1].shape == moved.shape &&
-              result[2].source == newly_linked.source &&
-              result[2].matrix.rotation == newly_linked.matrix.rotation,
-          "Detached BASEEXT spotlights lost source-matched display interpolation");
+  require(
+      result.size() == current.size() && result[0].source == fixed.source &&
+          result[1].source == rotating.source &&
+          result[1].matrix.rotation[0] == 2048 &&
+          result[1].matrix.rotation[2] == 2048 &&
+          result[1].matrix.rotation[6] == -2048 &&
+          result[1].matrix.rotation[8] == 2048 &&
+          result[1].matrix.translation.z == -2556 &&
+          result[1].shape == moved.shape &&
+          result[2].source == newly_linked.source &&
+          result[2].matrix.rotation == newly_linked.matrix.rotation,
+      "Detached BASEEXT spotlights lost source-matched display interpolation");
   auto attached = moved;
   attached.flags = 1U;
   const std::array attached_current{attached};
   sf::platform::interpolateRetailVertexLights(previous, attached_current, 0.5,
-                                               result);
+                                              result);
   require(result[0].source == attached.source &&
               result[0].flags == attached.flags &&
               result[0].matrix.rotation == attached.matrix.rotation &&
@@ -627,7 +771,7 @@ void testRetailVertexLightPresentation() {
   require(midpoint_signature != current_signature &&
               current_signature !=
                   sf::platform::retailVertexLightPresentationSignature(current,
-                                                                        321) &&
+                                                                       321) &&
               sf::platform::retailVertexLightPresentationSignature({}, 320) ==
                   sf::platform::retailVertexLightPresentationSignature({}, 640),
           "Retail light cache signature ignored matrix/projection changes");
@@ -878,6 +1022,36 @@ void testLegacyDynamicPresentationPolicy() {
           !sf::game::legacyManualAimPresentationActive(true, true, 1, false,
                                                        false, false, true),
       "Retail traversal camera mode leaked into host manual-aim visibility");
+  require(
+      sf::game::legacyTargetLockSignalActive(true, true, true, true, true) &&
+          !sf::game::legacyTargetLockSignalActive(false, true, true, true,
+                                                  true) &&
+          !sf::game::legacyTargetLockSignalActive(true, false, true, true,
+                                                  true) &&
+          !sf::game::legacyTargetLockSignalActive(true, true, false, true,
+                                                  true) &&
+          !sf::game::legacyTargetLockSignalActive(true, true, true, false,
+                                                  true) &&
+          !sf::game::legacyTargetLockSignalActive(true, true, true, true,
+                                                  false),
+      "Physical R1 and the live retail target link did not form a lock");
+  require(
+      sf::game::legacyTargetLockHudPresentationActive(false, true, false) &&
+          !sf::game::legacyTargetLockHudPresentationActive(true, true, false) &&
+          !sf::game::legacyTargetLockHudPresentationActive(false, false,
+                                                           false) &&
+          !sf::game::legacyTargetLockHudPresentationActive(false, true, true),
+      "Valid R1 target lock was filtered by unrelated controller flags");
+  require(
+      sf::game::legacyGameplayHudFrameSubmissionRequired(false, false, true) &&
+          sf::game::legacyGameplayHudFrameSubmissionRequired(false, true,
+                                                             false) &&
+          !sf::game::legacyGameplayHudFrameSubmissionRequired(false, false,
+                                                              false) &&
+          sf::game::legacyTargetingOverlayVisibility(true, 0.0) == 1.0 &&
+          sf::game::legacyTargetingOverlayVisibility(false, 0.5) == 0.5,
+      "Targeting overlay incorrectly followed normal-HUD visibility");
+
   require(sf::game::legacyTargetFollowCameraPresentationActive(false, false,
                                                                true) &&
               sf::game::legacyTargetFollowCameraPresentationActive(true, true,
@@ -939,16 +1113,36 @@ void testLegacyDynamicPresentationPolicy() {
               sf::game::legacyLetterboxPresentationActive(true, true) &&
               !sf::game::legacyLetterboxPresentationActive(false, false),
           "Letterbox ignored the mission intro or exact retail viewport state");
-  require(sf::game::legacyGameplayHudPresentationActive(false, false, false) &&
-              !sf::game::legacyGameplayHudPresentationActive(false, true,
-                                                              false) &&
-              !sf::game::legacyGameplayHudPresentationActive(true, false,
-                                                              false) &&
-              sf::game::legacyGameplayHudPresentationActive(false, true,
-                                                             true) &&
-              !sf::game::legacyGameplayHudPresentationActive(true, true, true),
-          "Gameplay HUD did not follow cinematic/radio/failure presentation "
-          "state");
+  require(
+      sf::game::legacyGameplayHudPresentationActive(false, false, false) &&
+          !sf::game::legacyGameplayHudPresentationActive(false, true, false) &&
+          !sf::game::legacyGameplayHudPresentationActive(true, false, false) &&
+          sf::game::legacyGameplayHudPresentationActive(false, true, true) &&
+          !sf::game::legacyGameplayHudPresentationActive(true, true, true),
+      "Gameplay HUD did not follow cinematic/radio/failure presentation "
+      "state");
+  constexpr auto hidden_failure_message =
+      sf::game::classifyLegacyGameplayUiSubmission(false, false, false, true);
+  constexpr auto visible_hud =
+      sf::game::classifyLegacyGameplayUiSubmission(true, false, false, false);
+  constexpr auto targeting_only =
+      sf::game::classifyLegacyGameplayUiSubmission(false, true, false, false);
+  constexpr auto fully_hidden =
+      sf::game::classifyLegacyGameplayUiSubmission(false, false, false, false);
+  require(!hidden_failure_message.gameplay_hud &&
+              hidden_failure_message.information &&
+              visible_hud.gameplay_hud && visible_hud.information &&
+              targeting_only.gameplay_hud && targeting_only.information &&
+              !fully_hidden.gameplay_hud && !fully_hidden.information,
+          "Letterbox or hidden normal HUD suppressed the independent "
+          "information layer");
+  require(
+      sf::game::classifyLegacyGameplayUiSubmission(false, false, true, false) ==
+          sf::game::LegacyGameplayUiSubmission{true, true} &&
+          sf::game::classifyLegacyGameplayUiSubmission(false, false, false,
+                                                       true) ==
+              hidden_failure_message,
+      "Gameplay UI submission classification was not deterministic");
   require(
       sf::game::legacyTerminalFailureFrameSubmissionRequired(true, 42U, 41U) &&
           !sf::game::legacyTerminalFailureFrameSubmissionRequired(false, 42U,
@@ -1085,6 +1279,33 @@ void testLegacyDynamicPresentationPolicy() {
           "Resident HMD textures must remain in their authored bank zero");
   require(sf::game::resident_spfx_object_texture_bank == 0U,
           "Resident object effects must remain in their authored SPFX bank");
+  require(sf::game::legacyWeaponCratePresentation(0x4fU, "WEPCRATE.GMD") &&
+              sf::game::legacyWeaponCratePresentation(0x50U, "WEPCRATX.GMD") &&
+              !sf::game::legacyWeaponCratePresentation(0x50U, "KEYCARD.GMD") &&
+              !sf::game::legacyWeaponCratePresentation(0x63U, "WEPCRATE.GMD"),
+          "Weapon-crate texture overlay accepted an unrelated object/model");
+  require(
+      sf::game::legacyAuthoredObjectPresentationHidden(
+          1U, 279, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
+          sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 279, 279U, 20U, 0x57U, "TNTCRATX.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              0U, 279, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 278, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 280, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 279, 278U, 20U, 0x57U, "TNTCRATE.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 279, 279U, 22U, 0x57U, "TNTCRATE.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 279, 279U, std::nullopt, 0x57U, "TNTCRATE.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 279, 279U, 20U, 0x50U, "TNTCRATE.GMD") &&
+          !sf::game::legacyAuthoredObjectPresentationHidden(
+              1U, 279, 279U, 20U, 0x57U, "WEPCRATE.GMD"),
+      "Authored invisible TNT-cache policy leaked to another object");
   require(sf::game::legacyResidentSpfxObjectTexture("BOMB.GMD") &&
               sf::game::legacyResidentSpfxObjectTexture("BOMBD.GMD") &&
               sf::game::legacyResidentSpfxObjectTexture("BOMBSUB.GMD") &&
@@ -1111,6 +1332,21 @@ void testEmissiveObjectLightingPolicy() {
               sf::game::legacyLampBillboardModel("YLIT") &&
               !sf::game::legacyLampBillboardModel("LIGHT"),
           "Retail lamp halo resource classification is incomplete");
+  require(sf::game::legacyLampBillboardPresentation(0x15U, "PLIT") &&
+              sf::game::legacyLampBillboardPresentation(0x15U, "LITRND") &&
+              sf::game::legacyLampBillboardPresentation(0x11U, "GLIT") &&
+              !sf::game::legacyLampBillboardPresentation(0x11U, "LIGHT"),
+          "Complete retail class-0x15 halo family was not classified");
+  require(sf::game::legacyFireVolumeModel(0x5aU, "FIRE") &&
+              !sf::game::legacyFireVolumeModel(0x5aU, "VAPOR") &&
+              sf::game::legacyFogVolumeModel(0x53U, "VAPOR") &&
+              !sf::game::legacyFogVolumeModel(0x53U, "FIRE"),
+          "Dedicated FIRE/VAPOR volume classification is not exact");
+  require(sf::game::legacySmokeVolumeModel("SMOKE.GMD") &&
+              !sf::game::legacySmokeVolumeModel("SMOKE.HMD") &&
+              !sf::game::legacySmokeVolumeModel("SMOKE2.GMD") &&
+              !sf::game::legacySmokeVolumeModel("smoke.GMD"),
+          "Retail smoke volume resource classification is not exact");
   require(sf::game::legacyLampEmitterModel(0x13U, "PRLIT") &&
               sf::game::legacyLampEmitterModel(0x11U, "HLITE") &&
               !sf::game::legacyLampEmitterModel(0x11U, "GASPIPE") &&
@@ -1135,6 +1371,12 @@ void testEmissiveObjectLightingPolicy() {
               !sf::game::objectVisualEffectReceivesSceneLighting(
                   sf::game::ObjectVisualEffect::scanner_xray) &&
               sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::smoke_volume) &&
+              sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::fog_volume) &&
+              !sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::fire_volume) &&
+              sf::game::objectVisualEffectReceivesSceneLighting(
                   sf::game::ObjectVisualEffect::lamp_fixture, false) &&
               !sf::game::objectVisualEffectReceivesSceneLighting(
                   sf::game::ObjectVisualEffect::lamp_fixture, true) &&
@@ -1142,12 +1384,18 @@ void testEmissiveObjectLightingPolicy() {
                   sf::game::ObjectVisualEffect::none) &&
               sf::game::objectVisualEffectReceivesDepthCue(
                   sf::game::ObjectVisualEffect::lamp_fixture, false) &&
-              sf::game::objectVisualEffectReceivesDepthCue(
+              !sf::game::objectVisualEffectReceivesDepthCue(
                   sf::game::ObjectVisualEffect::lamp_fixture, true) &&
-              sf::game::objectVisualEffectReceivesDepthCue(
+              !sf::game::objectVisualEffectReceivesDepthCue(
                   sf::game::ObjectVisualEffect::billboard_glow) &&
-              sf::game::objectVisualEffectReceivesDepthCue(
+              !sf::game::objectVisualEffectReceivesDepthCue(
                   sf::game::ObjectVisualEffect::police_lightbar) &&
+              sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::smoke_volume) &&
+              !sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::fire_volume) &&
+              sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::fog_volume) &&
               !sf::game::objectVisualEffectReceivesDepthCue(
                   sf::game::ObjectVisualEffect::scanner_xray),
           "Emissive object lighting or distance-fog policy mismatch");
@@ -1193,40 +1441,36 @@ void testGameplayCheckpointRestorePolicy() {
   sf::game::LegacyInventoryBridgeState restored{};
   restored.current_weapon =
       static_cast<std::uint8_t>(sf::game::WeaponId::key_card);
-  restored.owned_weapons =
-      weaponBit(sf::game::WeaponId::unarmed) |
-      weaponBit(sf::game::WeaponId::pistol_9mm) |
-      weaponBit(sf::game::WeaponId::key_card);
+  restored.owned_weapons = weaponBit(sf::game::WeaponId::unarmed) |
+                           weaponBit(sf::game::WeaponId::pistol_9mm) |
+                           weaponBit(sf::game::WeaponId::key_card);
   restored.magazines[weaponSlot(sf::game::WeaponId::pistol_9mm)] = 7U;
   restored.reserves[weaponSlot(sf::game::WeaponId::pistol_9mm)] = 21U;
   restored.magazines[weaponSlot(sf::game::WeaponId::key_card)] = 3U;
   restored.reserves[weaponSlot(sf::game::WeaponId::key_card)] = 9U;
 
   sf::game::CampaignCarryState retry{};
-  retry.current_weapon =
-      static_cast<std::uint8_t>(sf::game::WeaponId::m_16);
+  retry.current_weapon = static_cast<std::uint8_t>(sf::game::WeaponId::m_16);
   retry.owned_weapons = weaponBit(sf::game::WeaponId::unarmed) |
-                          weaponBit(sf::game::WeaponId::m_16);
+                        weaponBit(sf::game::WeaponId::m_16);
   retry.magazines[weaponSlot(sf::game::WeaponId::m_16)] = 17U;
   retry.reserves[weaponSlot(sf::game::WeaponId::m_16)] = 83U;
 
   const auto merged = sf::game::mergeRetryInventoryState(restored, retry);
-  require((merged.owned_weapons & sf::game::campaign_persistent_weapon_mask) ==
-                  retry.owned_weapons &&
-              (merged.owned_weapons &
-               weaponBit(sf::game::WeaponId::key_card)) != 0U &&
-              merged.current_weapon == restored.current_weapon &&
-              merged.magazines[weaponSlot(sf::game::WeaponId::m_16)] == 17U &&
-              merged.reserves[weaponSlot(sf::game::WeaponId::m_16)] == 83U &&
-              merged.magazines[weaponSlot(sf::game::WeaponId::pistol_9mm)] ==
-                  0U &&
-              merged.reserves[weaponSlot(sf::game::WeaponId::pistol_9mm)] ==
-                  0U &&
-              merged.magazines[weaponSlot(sf::game::WeaponId::key_card)] ==
-                  3U &&
-              merged.reserves[weaponSlot(sf::game::WeaponId::key_card)] == 9U,
-          "Retry inventory merge lost mission-local items or retained stale "
-          "regular weapon state");
+  require(
+      (merged.owned_weapons & sf::game::campaign_persistent_weapon_mask) ==
+              retry.owned_weapons &&
+          (merged.owned_weapons & weaponBit(sf::game::WeaponId::key_card)) !=
+              0U &&
+          merged.current_weapon == restored.current_weapon &&
+          merged.magazines[weaponSlot(sf::game::WeaponId::m_16)] == 17U &&
+          merged.reserves[weaponSlot(sf::game::WeaponId::m_16)] == 83U &&
+          merged.magazines[weaponSlot(sf::game::WeaponId::pistol_9mm)] == 0U &&
+          merged.reserves[weaponSlot(sf::game::WeaponId::pistol_9mm)] == 0U &&
+          merged.magazines[weaponSlot(sf::game::WeaponId::key_card)] == 3U &&
+          merged.reserves[weaponSlot(sf::game::WeaponId::key_card)] == 9U,
+      "Retry inventory merge lost mission-local items or retained stale "
+      "regular weapon state");
   auto restored_regular = restored;
   restored_regular.current_weapon =
       static_cast<std::uint8_t>(sf::game::WeaponId::pistol_9mm);
@@ -3268,10 +3512,24 @@ void testGameplayHud() {
               !rifle_scope(true, 5U, 4U) && !rifle_scope(false, 2U, 2U),
           "Retail rifle scope ownership no longer follows exact 2/2 and "
           "3/3 states");
+  const auto scoped_hud_visibility =
+      sf::platform::retailRifleScopeGameplayHudVisibility;
+  require(scoped_hud_visibility(true, 2U, 2U, 0.75) == 0.0 &&
+              scoped_hud_visibility(true, 3U, 3U, 0.75) == 0.0 &&
+              scoped_hud_visibility(false, 2U, 2U, 0.75) == 0.75 &&
+              scoped_hud_visibility(true, 2U, 3U, 0.75) == 0.75,
+          "Rifle scope no longer hides only the ordinary HUD or restores it "
+          "immediately on the native release edge");
   require(virus_scope(true, 5U, 4U) && !virus_scope(true, 4U, 4U) &&
               !virus_scope(true, 5U, 5U) && !virus_scope(false, 5U, 4U),
           "Viral detector ownership lost its distinct interface-5/aim-4 "
           "state");
+  require(sf::platform::retailSniperScopeLetterboxActive(true, 2U) &&
+              !sf::platform::retailSniperScopeLetterboxActive(true, 3U) &&
+              !sf::platform::retailSniperScopeLetterboxActive(false, 2U) &&
+              sf::platform::retail_sniper_scope_aperture_width == 320 &&
+              sf::platform::retail_sniper_scope_bar_height == 40,
+          "Original sniper scope aperture escaped its exact 320x160 mask");
 
   const auto retail_scope_message = sf::platform::isRetailScopeMessage;
   require(
@@ -3408,7 +3666,7 @@ void testGameplayHud() {
   const auto far_reticle_scale = sf::game::originalAimReticleScale(320, 6144.0);
   const auto reference_reticle_geometry =
       sf::game::scaledOriginalAimReticleGeometry(false,
-                                                  reference_reticle_scale);
+                                                 reference_reticle_scale);
   const auto near_reticle_geometry =
       sf::game::scaledOriginalAimReticleGeometry(false, near_reticle_scale);
   const auto far_reticle_geometry =
@@ -3427,6 +3685,16 @@ void testGameplayHud() {
               near_reticle_geometry.vertical_ray >
                   far_reticle_geometry.vertical_ray,
           "Original target reticle no longer follows projected distance");
+
+  const auto maximum_range_lock_scale =
+      sf::game::originalTargetLockReticleScale(320, 32000.0);
+  const auto maximum_range_lock_geometry =
+      sf::game::scaledOriginalAimReticleGeometry(false,
+                                                 maximum_range_lock_scale);
+  require(std::abs(maximum_range_lock_scale - 0.4) < 0.000001 &&
+              maximum_range_lock_geometry ==
+                  sf::game::OriginalAimReticleGeometry{7, 3, 7, 4},
+          "Maximum-range target lock reticle became unreadable");
 
   require(sf::game::aimReticleOwner(true, false, false, false) ==
                   sf::game::AimReticleOwner::host &&
@@ -3876,17 +4144,15 @@ void testTitleMenu() {
   static_cast<void>(menu.update(sf::game::TitleInput{.previous = true}));
   require(menu.selection() == 0,
           "Reverse title navigation did not skip unavailable Load Game");
-  require(menu.update(sf::game::TitleInput{.confirm = true}) ==
-                  sf::game::TitleCommand::none &&
-              menu.phase() == sf::game::TitlePhase::select_difficulty &&
-              menu.selectedDifficulty() ==
-                  sf::game::CampaignDifficulty::original &&
-              !menu.itemEnabled(0) && !menu.itemEnabled(1) &&
-              !menu.itemEnabled(2),
-          "New Game did not open the difficulty picker");
+  require(
+      menu.update(sf::game::TitleInput{.confirm = true}) ==
+              sf::game::TitleCommand::none &&
+          menu.phase() == sf::game::TitlePhase::select_difficulty &&
+          menu.selectedDifficulty() == sf::game::CampaignDifficulty::original &&
+          !menu.itemEnabled(0) && !menu.itemEnabled(1) && !menu.itemEnabled(2),
+      "New Game did not open the difficulty picker");
   static_cast<void>(menu.update(sf::game::TitleInput{.next = true}));
-  require(menu.selectedDifficulty() ==
-              sf::game::CampaignDifficulty::hard_mode,
+  require(menu.selectedDifficulty() == sf::game::CampaignDifficulty::hard_mode,
           "Difficulty picker did not select Hard Mode");
   static_cast<void>(menu.update(sf::game::TitleInput{.next = true}));
   require(menu.selectedDifficulty() == sf::game::CampaignDifficulty::agent &&
@@ -3894,8 +4160,7 @@ void testTitleMenu() {
                   sf::game::TitleCommand::none &&
               menu.phase() == sf::game::TitlePhase::agent_warning,
           "Difficulty picker did not open the Agent warning");
-  require(menu.update(sf::game::TitleInput{}) ==
-                  sf::game::TitleCommand::none &&
+  require(menu.update(sf::game::TitleInput{}) == sf::game::TitleCommand::none &&
               menu.update(sf::game::TitleInput{.confirm = true}) ==
                   sf::game::TitleCommand::new_game &&
               menu.phase() == sf::game::TitlePhase::menu,
@@ -4008,7 +4273,7 @@ void testTitleMenu() {
   static_cast<void>(held_difficulty_menu.update({}));
   require(held_difficulty_menu.update(
               sf::game::TitleInput{.confirm = true, .confirm_down = true}) ==
-                  sf::game::TitleCommand::new_game,
+              sf::game::TitleCommand::new_game,
           "Fresh difficulty confirmation was not accepted after release");
 
   const auto encoded_slots = sf::game::serializeTitleSaveSlots(slots);
@@ -4169,9 +4434,9 @@ void testRetailTerrainDepthCuePolicy() {
   using sf::platform::retail_depth_cue_q12_one;
   using sf::platform::retailTerrainDepthCueFactorQ12;
 
-  require(std::abs(sf::platform::nativeDepthCueCameraZ(1350.0) - 1000.0) <
+  require(std::abs(sf::platform::nativeDepthCueCameraZ(1350.0) - 1350.0) <
               0.000001,
-          "Native depth-cue distance policy drifted from the configured scale");
+          "Native terrain no longer uses the original PS1 fog distance");
 
   constexpr auto park = std::uint32_t{0x00020320U};
   require(retailTerrainDepthCueFactorQ12(park, 1067.0) == 0L &&
@@ -4198,176 +4463,29 @@ void testRetailTerrainDepthCuePolicy() {
           "Invalid retail depth-cue input did not disable terrain DPCS");
 }
 
-void testWorldChunkAppearance() {
-  sf::platform::WorldChunkAppearance appearance;
-  constexpr std::array initial{std::uint16_t{0U}, std::uint16_t{2U}};
-  appearance.advance(initial, 1.0 / 60.0);
-  require(appearance.depthCueFloorQ12(0U) == 0L &&
-              appearance.depthCueFloorQ12(2U) == 0L,
-          "Initial world chunks unexpectedly faded in");
-
-  constexpr std::array transitioned{std::uint16_t{1U}, std::uint16_t{2U}};
-  appearance.advance(transitioned, 1.0 / 20.0);
-  require(appearance.depthCueFloorQ12(1U) > 0L &&
-              appearance.depthCueFloorQ12(1U) <
-                  sf::platform::retail_depth_cue_q12_one &&
-              appearance.depthCueFloorQ12(2U) == 0L,
-          "New world chunk did not begin revealing on its first native frame");
-
-  appearance.advance(transitioned,
-                     sf::platform::world_chunk_fade_seconds * 0.5);
-  const auto halfway = appearance.depthCueFloorQ12(1U);
-  require(halfway > 0L && halfway < sf::platform::retail_depth_cue_q12_one,
-          "World chunk appearance did not interpolate at native frame rate");
-  appearance.advance(transitioned, sf::platform::world_chunk_fade_seconds);
-  require(appearance.depthCueFloorQ12(1U) == 0L,
-          "World chunk appearance did not converge to retail depth cue");
-
-  constexpr std::array reactivated{std::uint16_t{0U}, std::uint16_t{2U}};
-  appearance.advance(reactivated, 1.0 / 60.0);
-  require(appearance.revealProgress(0U) > 0.0 &&
-              appearance.revealProgress(0U) < 1.0 &&
-              appearance.depthCueFloorQ12(0U) > 0L &&
-              appearance.depthCueFloorQ12(0U) <=
-                  sf::platform::retail_depth_cue_q12_one,
-          "Reactivated world chunk did not enter the smooth transition");
-
-  sf::platform::WorldChunkAppearance portal_jitter;
-  constexpr std::array room_zero{std::uint16_t{0U}};
-  constexpr std::array room_one{std::uint16_t{1U}};
-  sf::platform::WorldChunkAppearance restored_appearance;
-  restored_appearance.prime(room_zero, room_one, 10.0, 20.0);
-  require(restored_appearance.isActive(0U) &&
-              restored_appearance.isWarm(1U) &&
-              restored_appearance.revealProgress(0U) == 1.0 &&
-              restored_appearance.revealProgress(1U) == 0.0 &&
-              std::abs(restored_appearance.revealCoordinate(1U, 10.0, 120.0) -
-                       100.0) < 0.000001,
-          "Checkpoint restore exposed optional lookahead geometry");
-  restored_appearance.advance(room_zero, 1.0 / 60.0, room_one, 10.0, 20.0);
-  const auto restored_warm_progress =
-      restored_appearance.revealProgress(1U);
-  require(restored_appearance.revealProgress(0U) == 1.0 &&
-              restored_warm_progress > 0.0 &&
-              restored_warm_progress <
-                  sf::platform::world_chunk_prefetch_lead,
-          "Checkpoint lookahead did not resume its normal gradual wave");
-  restored_appearance.advance(
-      room_zero, sf::platform::world_chunk_fade_seconds, room_one, 10.0,
-      20.0);
-  require(restored_appearance.revealProgress(1U) ==
-              sf::platform::world_chunk_prefetch_lead,
-          "Checkpoint lookahead did not converge to its presentation lead");
-  portal_jitter.advance(room_zero, 1.0 / 60.0);
-  portal_jitter.advance(room_one, 1.0 / 60.0);
-  const auto cold_room = portal_jitter.depthCueFloorQ12(1U);
-  portal_jitter.advance(room_zero, 1.0 / 60.0);
-  require(portal_jitter.isActive(0U) && !portal_jitter.isActive(1U) &&
-              portal_jitter.depthCueFloorQ12(0U) < cold_room,
-          "One-frame portal jitter restarted a warm chunk from full fog");
-
-  sf::platform::WorldChunkAppearance authored_prefetch;
-  authored_prefetch.advance(room_zero, 1.0 / 60.0, room_one, 10.0, 20.0);
-  require(authored_prefetch.isActive(0U) &&
-              !authored_prefetch.isActive(1U) &&
-              authored_prefetch.isWarm(1U) &&
-              authored_prefetch.revealProgress(1U) == 0.0 &&
-              std::abs(authored_prefetch.revealCoordinate(1U, 10.0, 120.0) -
-                       100.0) < 0.000001 &&
-              std::abs(authored_prefetch.revealCoordinate(1U, 110.0, 20.0) -
-                       100.0) < 0.000001,
-          "A prefetched world chunk did not start hidden from its fixed "
-          "origin");
-  authored_prefetch.advance(
-      room_zero,
-      sf::platform::world_chunk_fade_seconds *
-          sf::platform::world_chunk_prefetch_lead * 0.5,
-      room_one, 100.0, 20.0);
-  const auto warming_progress = authored_prefetch.revealProgress(1U);
-  require(warming_progress > 0.0 &&
-              warming_progress < sf::platform::world_chunk_prefetch_lead &&
-              std::abs(authored_prefetch.revealCoordinate(1U, 10.0, 120.0) -
-                       100.0) < 0.000001,
-          "Prefetch progress or its captured reveal origin was not stable");
-  authored_prefetch.advance(
-      room_zero,
-      sf::platform::world_chunk_fade_seconds *
-          sf::platform::world_chunk_prefetch_lead,
-      room_one, 100.0, 20.0);
-  require(authored_prefetch.revealProgress(1U) ==
-              sf::platform::world_chunk_prefetch_lead,
-          "Prefetch progress did not stop at its presentation lead");
-
-  authored_prefetch.advance(room_one, 1.0 / 60.0,
-                            std::span<const std::uint16_t>{}, 100.0, 20.0);
-  const auto prefetched_progress = authored_prefetch.revealProgress(1U);
-  require(authored_prefetch.isActive(1U) &&
-              !authored_prefetch.isWarm(1U) &&
-              prefetched_progress > sf::platform::world_chunk_prefetch_lead &&
-              prefetched_progress < 1.0 &&
-              authored_prefetch.depthCueFloorQ12(1U) > 0L &&
-              std::abs(authored_prefetch.revealCoordinate(1U, 10.0, 120.0) -
-                       100.0) < 0.000001,
-          "An activated prefetch bypassed its stable partial reveal");
-
-  const auto spatial_floor = sf::platform::worldChunkSpatialDepthCueFloorQ12;
-  constexpr auto near_depth = 100.0;
-  constexpr auto middle_depth = 600.0;
-  constexpr auto far_depth = 1100.0;
-  require(spatial_floor(0.0, near_depth, near_depth, far_depth) ==
-                  sf::platform::retail_depth_cue_q12_one &&
-              spatial_floor(0.0, far_depth, near_depth, far_depth) ==
-                  sf::platform::retail_depth_cue_q12_one &&
-              spatial_floor(1.0, near_depth, near_depth, far_depth) == 0L &&
-              spatial_floor(1.0, far_depth, near_depth, far_depth) == 0L,
-          "Spatial chunk reveal endpoints are not exact");
-  const auto spatial_near =
-      spatial_floor(0.5, near_depth, near_depth, far_depth);
-  const auto spatial_middle =
-      spatial_floor(0.5, middle_depth, near_depth, far_depth);
-  const auto spatial_far =
-      spatial_floor(0.5, far_depth, near_depth, far_depth);
-  require(spatial_near < spatial_middle && spatial_middle < spatial_far &&
-              spatial_floor(0.25, middle_depth, near_depth, far_depth) >=
-                  spatial_middle &&
-              spatial_middle >=
-                  spatial_floor(0.75, middle_depth, near_depth, far_depth),
-          "Spatial chunk reveal is not a monotonic near-to-far wave");
-
-  authored_prefetch.advance(room_one,
-                            sf::platform::world_chunk_fade_seconds);
-  require(authored_prefetch.revealProgress(1U) == 1.0 &&
-              authored_prefetch.depthCueFloorQ12(1U) == 0L,
-          "A prefetched world chunk did not finish its reveal");
-}
-
 void testWorldPresentationEnvelope() {
   constexpr std::array retained{std::uint16_t{2U}, std::uint16_t{7U}};
   constexpr std::array turned_camera{std::uint16_t{7U}, std::uint16_t{9U},
                                      std::uint16_t{9U}};
-  const auto widened = sf::game::buildWorldPresentationEnvelope(
-      retained, turned_camera, false);
-  require(widened ==
-              std::vector<std::uint16_t>{std::uint16_t{2U},
-                                         std::uint16_t{7U},
-                                         std::uint16_t{9U}},
+  const auto widened =
+      sf::game::buildWorldPresentationEnvelope(retained, turned_camera, false);
+  require(widened == std::vector<std::uint16_t>{std::uint16_t{2U},
+                                                std::uint16_t{7U},
+                                                std::uint16_t{9U}},
           "A camera-dependent portal set discarded the exterior shell");
 
-  const auto next_room = sf::game::buildWorldPresentationEnvelope(
-      widened, turned_camera, true);
+  const auto next_room =
+      sf::game::buildWorldPresentationEnvelope(widened, turned_camera, true);
   require(next_room ==
-              std::vector<std::uint16_t>{std::uint16_t{7U},
-                                         std::uint16_t{9U}},
+              std::vector<std::uint16_t>{std::uint16_t{7U}, std::uint16_t{9U}},
           "A real room transition retained the previous room envelope");
 
-  constexpr std::array visible_terrain{
-      std::uint16_t{2U}, std::uint16_t{7U}, std::uint16_t{2U}};
-  constexpr std::array authored_tail{
-      std::uint16_t{11U}, std::uint16_t{9U}, std::uint16_t{8U},
-      std::uint16_t{9U}};
-  constexpr std::array portal_candidates{
-      std::uint16_t{7U}, std::uint16_t{8U}, std::uint16_t{9U},
-      std::uint16_t{8U}};
+  constexpr std::array visible_terrain{std::uint16_t{2U}, std::uint16_t{7U},
+                                       std::uint16_t{2U}};
+  constexpr std::array authored_tail{std::uint16_t{11U}, std::uint16_t{9U},
+                                     std::uint16_t{8U}, std::uint16_t{9U}};
+  constexpr std::array portal_candidates{std::uint16_t{7U}, std::uint16_t{8U},
+                                         std::uint16_t{9U}, std::uint16_t{8U}};
   const auto validated_tail_choice = sf::game::buildWorldTerrainEnvelope(
       visible_terrain, authored_tail, portal_candidates);
   require(validated_tail_choice ==
@@ -4377,18 +4495,16 @@ void testWorldPresentationEnvelope() {
               validated_tail_choice.size() == 3U,
           "Terrain lookahead did not prefer one validated DAT-tail step");
 
-  constexpr std::array far_authored_tail{
-      std::uint16_t{13U}, std::uint16_t{12U}, std::uint16_t{7U}};
+  constexpr std::array far_authored_tail{std::uint16_t{13U}, std::uint16_t{12U},
+                                         std::uint16_t{7U}};
   constexpr std::array near_room_candidates{
       std::uint16_t{7U}, std::uint16_t{9U}, std::uint16_t{12U},
       std::uint16_t{13U}};
   const auto connected_far_choice = sf::game::buildWorldTerrainEnvelope(
       validated_tail_choice, far_authored_tail, near_room_candidates);
   require(connected_far_choice ==
-              std::vector<std::uint16_t>{std::uint16_t{2U},
-                                         std::uint16_t{7U},
-                                         std::uint16_t{9U},
-                                         std::uint16_t{13U}},
+              std::vector<std::uint16_t>{std::uint16_t{2U}, std::uint16_t{7U},
+                                         std::uint16_t{9U}, std::uint16_t{13U}},
           "A second connected terrain lookahead step was not retained");
 
   constexpr std::array distant_authored_tail{
@@ -4397,41 +4513,95 @@ void testWorldPresentationEnvelope() {
       std::uint16_t{13U}, std::uint16_t{15U}, std::uint16_t{17U}};
   const auto connected_distant_choice = sf::game::buildWorldTerrainEnvelope(
       connected_far_choice, distant_authored_tail, far_room_candidates);
-  require(sf::game::world_terrain_lookahead_steps == 3U &&
-              connected_distant_choice ==
-                  std::vector<std::uint16_t>{std::uint16_t{2U},
-                                             std::uint16_t{7U},
-                                             std::uint16_t{9U},
-                                             std::uint16_t{13U},
-                                             std::uint16_t{17U}},
+  require(connected_distant_choice ==
+              std::vector<std::uint16_t>{
+                  std::uint16_t{2U}, std::uint16_t{7U}, std::uint16_t{9U},
+                  std::uint16_t{13U}, std::uint16_t{17U}},
           "A third connected terrain lookahead step was not retained");
 
-  constexpr std::array unmatched_tail{
-      std::uint16_t{11U}, std::uint16_t{12U}};
-  constexpr std::array fallback_candidates{
-      std::uint16_t{7U}, std::uint16_t{8U}, std::uint16_t{8U},
-      std::uint16_t{9U}};
+  constexpr std::array horizon_tail{std::uint16_t{21U},
+                                    std::uint16_t{17U}};
+  constexpr std::array horizon_candidates{std::uint16_t{17U},
+                                          std::uint16_t{21U}};
+  const auto complete_connected_route = sf::game::buildWorldTerrainEnvelope(
+      connected_distant_choice, horizon_tail, horizon_candidates);
+  require(complete_connected_route ==
+              std::vector<std::uint16_t>{
+                  std::uint16_t{2U}, std::uint16_t{7U}, std::uint16_t{9U},
+                  std::uint16_t{13U}, std::uint16_t{17U},
+                  std::uint16_t{21U}},
+          "Connected terrain stopped at the former three-step horizon");
+
+  constexpr std::array render_models{std::uint16_t{2U}, std::uint16_t{7U}};
+  const auto complete_envelope =
+      std::span<const std::uint16_t>{complete_connected_route};
+  const auto render_prefix = complete_envelope.first(render_models.size());
+  const auto residency_only_tail = complete_envelope.subspan(render_models.size());
+  require(std::ranges::equal(render_prefix, render_models) &&
+              std::ranges::none_of(residency_only_tail, [&](const auto model) {
+                return std::ranges::find(render_prefix, model) !=
+                       render_prefix.end();
+              }),
+          "World lookahead is not a disjoint residency-only tail");
+
+  const auto presentation_only = sf::platform::worldRenderEnvelope(
+      render_models, complete_envelope, 0U);
+  const auto admitted_prefix = sf::platform::worldRenderEnvelope(
+      render_models, complete_envelope, 2U);
+  const auto all_admitted = sf::platform::worldRenderEnvelope(
+      render_models, complete_envelope, 100U);
+  constexpr std::array expected_admitted_prefix{
+      std::uint16_t{2U}, std::uint16_t{7U}, std::uint16_t{9U},
+      std::uint16_t{13U}};
+  require(std::ranges::equal(presentation_only, render_models) &&
+              std::ranges::equal(admitted_prefix,
+                                 expected_admitted_prefix) &&
+              std::ranges::equal(all_admitted, complete_envelope),
+          "Resource readiness did not expose one exact cumulative prefix");
+
+  constexpr std::array broken_prefix{std::uint16_t{2U},
+                                     std::uint16_t{9U},
+                                     std::uint16_t{13U}};
+  constexpr std::array duplicate_tail{std::uint16_t{2U},
+                                      std::uint16_t{7U},
+                                      std::uint16_t{9U},
+                                      std::uint16_t{9U}};
+  const auto rejected_gap = sf::platform::selectWorldRenderEnvelope(
+      render_models, broken_prefix, 2U);
+  const auto rejected_duplicate = sf::platform::selectWorldRenderEnvelope(
+      render_models, duplicate_tail, 2U);
+  require(!rejected_gap.topology_valid &&
+              rejected_gap.render_count == render_models.size() &&
+              rejected_gap.admitted_lookahead_count == 0U &&
+              !rejected_duplicate.topology_valid &&
+              std::ranges::equal(
+                  sf::platform::worldRenderEnvelope(render_models,
+                                                    duplicate_tail, 2U),
+                  render_models),
+          "A discontinuous world route escaped the fail-closed envelope");
+
+  constexpr std::array unmatched_tail{std::uint16_t{11U}, std::uint16_t{12U}};
+  constexpr std::array fallback_candidates{std::uint16_t{7U}, std::uint16_t{8U},
+                                           std::uint16_t{8U},
+                                           std::uint16_t{9U}};
   const auto fallback_choice = sf::game::buildWorldTerrainEnvelope(
       visible_terrain, unmatched_tail, fallback_candidates);
-  require(fallback_choice ==
-              std::vector<std::uint16_t>{std::uint16_t{2U},
-                                         std::uint16_t{7U},
-                                         std::uint16_t{8U}},
+  require(fallback_choice == std::vector<std::uint16_t>{std::uint16_t{2U},
+                                                        std::uint16_t{7U},
+                                                        std::uint16_t{8U}},
           "Terrain lookahead did not use the first unseen portal fallback");
 
-  constexpr std::array duplicate_visible{
-      std::uint16_t{4U}, std::uint16_t{4U}, std::uint16_t{5U},
-      std::uint16_t{5U}};
-  constexpr std::array already_visible{
-      std::uint16_t{5U}, std::uint16_t{4U}, std::uint16_t{5U}};
+  constexpr std::array duplicate_visible{std::uint16_t{4U}, std::uint16_t{4U},
+                                         std::uint16_t{5U}, std::uint16_t{5U}};
+  constexpr std::array already_visible{std::uint16_t{5U}, std::uint16_t{4U},
+                                       std::uint16_t{5U}};
   const auto duplicate_only = sf::game::buildWorldTerrainEnvelope(
       duplicate_visible, already_visible, already_visible);
   const auto empty = sf::game::buildWorldTerrainEnvelope(
       std::span<const std::uint16_t>{}, std::span<const std::uint16_t>{},
       std::span<const std::uint16_t>{});
-  require(duplicate_only ==
-                  std::vector<std::uint16_t>{std::uint16_t{4U},
-                                             std::uint16_t{5U}} &&
+  require(duplicate_only == std::vector<std::uint16_t>{std::uint16_t{4U},
+                                                       std::uint16_t{5U}} &&
               empty.empty(),
           "Terrain lookahead retained duplicates or invented an empty tail");
 }
@@ -4477,8 +4647,7 @@ void testPresentationFrameMeter() {
   }
   require(sixty_hz.ready() &&
               std::abs(sixty_hz.framesPerSecond() - 60.0) < 0.0001 &&
-              std::abs(sixty_hz.simulationFramesPerSecond() - 20.0) <
-                  0.0001 &&
+              std::abs(sixty_hz.simulationFramesPerSecond() - 20.0) < 0.0001 &&
               std::abs(sixty_hz.frameMilliseconds() - 1000.0 / 60.0) < 0.0001 &&
               sixty_hz.text() == "FPS 60  LOGIC 20  16.7 MS",
           "Dual FPS meter misreported a stable 60/20 Hz stream");
@@ -4553,9 +4722,10 @@ void testRetailOpticHistoryPolicy() {
           "Optic reset retained stale thermal snapshots");
 }
 
-sf::game::VirusScannerTargetCandidate scannerCandidate(
-    std::uint16_t object, std::int32_t slot, std::uint32_t class_id,
-    std::int32_t x, std::int32_t y, std::int32_t z) {
+sf::game::VirusScannerTargetCandidate
+scannerCandidate(std::uint16_t object, std::int32_t slot,
+                 std::uint32_t class_id, std::int32_t x, std::int32_t y,
+                 std::int32_t z) {
   return {object, slot, class_id, {x, y, z}};
 }
 
@@ -4596,10 +4766,8 @@ void testVirusScannerTargetSelectionPolicy() {
           return markers[index];
         });
   };
-  const std::array marker_boundary{
-      scannerCandidate(2U, -1, 0U, 127, 0, 0)};
-  const std::array marker_outside{
-      scannerCandidate(2U, -1, 0U, 128, 0, 0)};
+  const std::array marker_boundary{scannerCandidate(2U, -1, 0U, 127, 0, 0)};
+  const std::array marker_outside{scannerCandidate(2U, -1, 0U, 128, 0, 0)};
   const std::array marker_outside_sphere{
       scannerCandidate(2U, -1, 0U, 100, 80, 0)};
   require(select_marker({0, 0, 0}, marker_boundary) == 2U &&
@@ -4607,8 +4775,7 @@ void testVirusScannerTargetSelectionPolicy() {
               !select_marker({0, 0, 0}, marker_outside_sphere),
           "Scanner marker pairing changed its strict retail distance <128");
 
-  const std::array mirrored_marker{
-      scannerCandidate(2U, -1, 0U, 0, -200, 0)};
+  const std::array mirrored_marker{scannerCandidate(2U, -1, 0U, 0, -200, 0)};
   require(!select_marker({0, 200, 0}, mirrored_marker),
           "Scanner marker pairing incorrectly mirrored native Y");
 
@@ -4619,16 +4786,13 @@ void testVirusScannerTargetSelectionPolicy() {
   require(select_marker({0, 0, 0}, ordered_markers) == 9U,
           "Scanner marker no longer returns the first retail object match");
 
-  const std::array extreme_marker{
-      scannerCandidate(1U, -1, 0U,
-                       std::numeric_limits<std::int32_t>::max(), 0, 0)};
-  require(!select_marker(
-              {std::numeric_limits<std::int32_t>::min(), 0, 0},
-              extreme_marker),
+  const std::array extreme_marker{scannerCandidate(
+      1U, -1, 0U, std::numeric_limits<std::int32_t>::max(), 0, 0)};
+  require(!select_marker({std::numeric_limits<std::int32_t>::min(), 0, 0},
+                         extreme_marker),
           "Scanner marker distance overflow accepted an impossible pair");
   require(!sf::game::virusScannerDirectDistanceSquared(
-              {0, 0, 0}, {0, 0, 0},
-              std::numeric_limits<std::int64_t>::max()),
+              {0, 0, 0}, {0, 0, 0}, std::numeric_limits<std::int64_t>::max()),
           "Scanner marker radius overflow was not rejected");
 }
 
@@ -4649,6 +4813,7 @@ int main() {
     testLegacyDynamicPresentationPolicy();
     testRetailVertexLightPresentation();
     testEmissiveObjectLightingPolicy();
+    testPersistentFireVolumeLayout();
     testVirusScannerMarkerPolicy();
     testRetailOpticHistoryPolicy();
     testVirusScannerTargetSelectionPolicy();
@@ -4683,7 +4848,6 @@ int main() {
     testTitleMenu();
     testActorShadowReceiverStability();
     testRetailTerrainDepthCuePolicy();
-    testWorldChunkAppearance();
     testWorldPresentationEnvelope();
     testPlayerCameraFade();
     testPresentationFrameMeter();

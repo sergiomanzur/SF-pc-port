@@ -3,6 +3,57 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.29 - 2026-08-13
+
+### Rendering and level presentation
+
+- Restored one sequential PS1-style ordering-table submission while retaining
+  PGXP depth for widescreen geometry, eliminating the custom chunk stencil,
+  split reordering and mid-frame depth clears that exposed interiors through
+  exterior walls.
+- Extended connected-route residency and rendering with fail-closed texture
+  admission and dense retail depth cue, allowing long sight lines without
+  submitting an incomplete resource suffix.
+- Added optional mission skyboxes with original SCRIM/fog fallback and a
+  persistent launcher/INI/CLI toggle.
+- Added depth-aware object shadows, fallback smooth normals for legacy GMD
+  models and palette-safe minification for indexed textures.
+
+### Fire, particles and lighting
+
+- Added oriented depth-aware fire and smoke volumes, display-rate interpolation
+  for retail particles and high-resolution temporal fire frames derived from
+  the original sprite families.
+- Preloads authored CFIRE resources along the admitted route and resolves
+  source-less attached emitters conservatively, so upgraded fire is available
+  across missions without converting ordinary explosions.
+- Synchronized emissive effects and bounded dynamic lights, including authored
+  halo colour, wall-aware light rejection and surface lighting for Girdeux's
+  corrected flamethrower arc.
+- Reduced duplicate authored fire ownership and kept the original mission-2
+  sprite core where its dense retail presentation is required.
+
+### Interface and launcher
+
+- Split the Windows launcher into focused pages, fixed UTF-8 Russian text,
+  reliable INI readback and controller layout sizing, and removed the stale
+  desktop-resolution hint.
+- Restored the ordinary sniper scope's complete 320x160 black mask on all four
+  sides; ordinary HUD elements now hide inside rifle optics and return on the
+  native release edge without animation.
+- Detached retail information messages from the normal HUD pass so mission
+  failure/death text remains visible above letterbox framing.
+- Added a presentation-only C4 callout target while preserving retail mission
+  triggers, collision and pickup state.
+
+### Validation
+
+- Windows x64 PsyCross Release build completed successfully.
+- Full Release CTest suite and release archive audits completed successfully.
+- The release ZIP includes all runtime mission skyboxes and excludes game
+  images, saves, settings, logs, debug symbols and developer artifacts.
+- The interactive game was not launched during automated validation.
+
 ## 0.1.0-public-test.28 - 2026-08-07
 
 ### Controller stability and configuration

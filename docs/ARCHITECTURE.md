@@ -32,6 +32,41 @@ not write player position, combat, AI, inventory or animation.
 `sf_architecture_check` enforces the dependency direction and verifies that every
 project-owned translation unit and `.inc` fragment belongs to a CMake target.
 
+## Launcher
+
+The shipping launcher is a single Win32 window with one message loop and four
+embedded pages: **Launch**, **Graphics**, **Controls** and **Dossiers**. Page
+changes show or hide child controls; they do not open nested modal launchers.
+
+Launcher responsibilities are split along stable boundaries:
+
+- the top-level shell owns tabs, shared fonts/colours, staged settings and the
+  final Play/Close decision;
+- `launcher/settings.*` owns per-user settings paths and INI
+  persistence independently of window controls;
+- `launcher/launch_page.*` owns CUE selection, language switching and startup
+  validation;
+- `launcher/graphics_page.*` owns graphics controls, option dependencies and
+  graphics validation before committing to the staged model;
+- `launcher/controls_page.*` owns keyboard/mouse rebinding, controller capture,
+  backend selection, stick layout and vibration controls. The shell forwards
+  commands, timer ticks and raw input messages to it;
+- `launcher/controller_capture.*` owns SDL protocol hints, controller hotplug,
+  prompt-family detection and physical-button polling without UI dependencies;
+- `launcher/dossier_page.*` owns image decoding and navigation for the embedded
+  four-page gallery;
+- `launcher/theme.*` and `launcher/text.*` own shared visual resources and the
+  English/Russian presentation catalogue.
+
+All pages edit the same staged model. Settings are committed once when Play
+succeeds; changing tabs or cancelling the launcher does not partially persist a
+page. English and Russian text are presentation data selected by the staged
+language, not separate control implementations.
+
+The controller and dossier pages own no application message loop. This keeps
+input capture, tab switching, DPI/layout updates and shutdown under the single
+top-level lifetime.
+
 ## Runtime clocks
 
 - Retail gameplay publishes at 20 Hz.
@@ -55,6 +90,14 @@ The backend owns:
 - VRAM residency, texture/CLUT uploads and native post-processing;
 - HUD, pause-menu and optic presentation from guest snapshots;
 - renderer-only interpolation, dynamic illumination and character shadows.
+
+Optional **Volumetric effects** are renderer-only, depth-aware replacements for
+eligible fire, explosion, smoke, vapour and light-halo presentation. They may
+fall back to the authored sprite path and never alter guest effect lifetime or
+collision.
+
+Volumetric effects do not add a separate fog renderer or setting. Authored
+distance fog remains the retail GTE/vertex depth cue, with mission skybox boundary blending.
 
 Static game geometry remains available to collision independently of renderer culling.
 Optional effects must not mutate gameplay residency or guest object state.

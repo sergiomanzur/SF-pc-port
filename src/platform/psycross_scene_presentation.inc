@@ -89,6 +89,7 @@ struct RenderPresentationSnapshot {
   std::vector<game::LegacyGuestRawPacketBridgeState> guest_raw_packets;
   std::vector<game::LegacyLineParticleBridgeState> current_line_particles;
   std::vector<game::LegacyCombatParticleBridgeState> current_combat_particles;
+  std::vector<game::LegacyExplParticle> expl_particles;
   bool renderer_sprite_fast_path{};
   bool guest_camera_lists_captured{};
 };
@@ -152,6 +153,8 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
   result.guest_raw_packets.clear();
   result.current_line_particles.clear();
   result.current_combat_particles.clear();
+  result.expl_particles.assign(gameplay.legacyExplParticles().begin(),
+                               gameplay.legacyExplParticles().end());
   result.renderer_sprite_fast_path = false;
   result.guest_camera_lists_captured = false;
   if (const auto *player = gameplay.legacyPlayerPresentation()) {
@@ -266,11 +269,6 @@ void applyRetailEnvironment(
     SetDQA(0);
     SetDQB(0);
   }
-  GR_SetSceneFogParameters(
-      retail_environment_active ? 1 : 0, environment.fog_color.red,
-      environment.fog_color.green, environment.fog_color.blue,
-      environment.fog_dqa, environment.fog_dqb, projection,
-      environment.effectiveTerrainDepthCue());
 }
 
 long retailGteDepthCue(double camera_z) {
@@ -458,6 +456,22 @@ void applyPresentationLook(game::CameraState &camera,
   camera.target_z = camera.z + std::cos(yaw_radians) * horizontal;
 }
 
+game::LegacyExplParticlePresentationSample legacyExplPresentationSample(
+    const game::LegacyExplParticle &particle) noexcept {
+  return {
+      particle.x,
+      particle.y,
+      particle.z,
+      particle.controller,
+      particle.source_slot,
+      static_cast<std::uint8_t>(particle.family),
+      particle.scale_byte,
+      particle.frame,
+      particle.attached_explosion_sequence,
+      particle.pool_index,
+  };
+}
+
 void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
                                    const RenderPresentationSnapshot &current,
                                    double amount,
@@ -597,6 +611,24 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
           : interpolateHeading(previous.player.yaw, current.player.yaw, amount);
   result.player_model_heading = interpolateHeading(
       previous.player_model_heading, current.player_model_heading, amount);
+
+  result.expl_particles.assign(current.expl_particles.begin(),
+                               current.expl_particles.end());
+  for (auto &particle : result.expl_particles) {
+    const auto preceding = std::ranges::find_if(
+        previous.expl_particles, [&](const auto &candidate) {
+          return candidate.pool_index == particle.pool_index;
+        });
+    if (preceding == previous.expl_particles.end()) {
+      continue;
+    }
+    const auto position = game::interpolateLegacyExplParticlePosition(
+        legacyExplPresentationSample(*preceding),
+        legacyExplPresentationSample(particle), amount);
+    particle.x = position.x;
+    particle.y = position.y;
+    particle.z = position.z;
+  }
 
   const auto shared_projectiles =
       std::min(previous.projectiles.size(), current.projectiles.size());

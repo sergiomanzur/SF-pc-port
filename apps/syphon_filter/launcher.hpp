@@ -17,10 +17,10 @@ void loadLauncherSettings(GraphicsSettings &graphics,
 saveLauncherControllerSettings(const ControllerButtonBindings &bindings,
                                bool vibration) noexcept;
 
-[[nodiscard]] bool showGraphicsLauncher(GraphicsSettings &settings,
-                                        KeyboardMouseBindings &input,
-                                        game::GameLanguage &language,
-                                        std::filesystem::path &cue_path);
+[[nodiscard]] bool showLauncher(GraphicsSettings &settings,
+                                KeyboardMouseBindings &input,
+                                game::GameLanguage &language,
+                                std::filesystem::path &cue_path);
 
 [[nodiscard]] bool retailCheatMarkerExists() noexcept;
 

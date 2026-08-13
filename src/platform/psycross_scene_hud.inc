@@ -768,7 +768,7 @@ struct GameplayHudScratch final {
   double reticle_velocity_x{};
   double reticle_velocity_y{};
   double reticle_scale_velocity{};
-  std::optional<std::uint16_t> reticle_target;
+  std::optional<std::int32_t> reticle_target;
   std::uint8_t reticle_mode{};
   bool reticle_follow_initialized{};
   bool reticle_was_visible{};
@@ -789,7 +789,7 @@ void advanceReticleSpring(double &value, double &velocity, double target,
 }
 
 void updateReticleFollow(GameplayHudScratch &scratch,
-                         std::optional<std::uint16_t> target,
+                         std::optional<std::int32_t> target,
                          const ProjectedHudAnchor &projected,
                          double target_scale, bool snap_to_anchor,
                          double presentation_delta_seconds) noexcept {
@@ -1958,8 +1958,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      const game::CameraState &camera,
                      const std::optional<Vector3> &target_anchor,
                      std::span<const WorldCalloutAnchor> world_callouts,
-                     const InputPromptBindings &bindings, bool first_person_aim,
-                     std::int32_t aim_heading,
+                     bool first_person_aim, std::int32_t aim_heading,
                      double presented_weapon_switch_frames,
                      double presentation_delta_seconds, int offset_x,
                      int offset_y, double visibility, double normal_hud_phase,
@@ -2016,6 +2015,9 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   DrawSync(0);
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
+  // Actor-shadow and PS1 mask bits belong to the world pass. The lock-on
+  // reticle is screen-space and must remain visible over the locked actor.
+  GR_EnableStencil(0);
 
   if (hud_visibility > 0.0) {
     // Retail uses its FONTA/B/C text layer here. ARMOR.TIM is a green legacy
@@ -2144,8 +2146,6 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   const auto scanner_optic =
       first_person_aim && weapon == game::WeaponId::virus_scanner;
   const auto authored_optic = scoped || scanner_optic;
-  const auto retail_optic_text =
-      first_person_aim && usesRetailEnglishOpticText(weapon);
   const auto reticle_owner = game::aimReticleOwner(
       first_person_aim, target_locked, grenade_weapon, authored_optic);
   const auto reticle_requested = reticle_owner == game::AimReticleOwner::host;
@@ -2181,6 +2181,19 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       drawOriginalScope(textures, weapon, aim_heading,
                         gameplay.headshotTargeted(), offset_x, offset_y);
     }
+    const auto reticle_target_identity = [&]() -> std::optional<std::int32_t> {
+      if (target_locked) {
+        if (const auto guest_slot = gameplay.targetLockGuestSlot()) {
+          return static_cast<std::int32_t>(*guest_slot);
+        }
+      }
+      if (const auto scene = gameplay.aimTarget()) {
+        // Guest slots and native scene indices occupy separate identity
+        // domains so recycling either one resets the follow spring exactly.
+        return 0x10000 + static_cast<std::int32_t>(*scene);
+      }
+      return std::nullopt;
+    }();
 
     // Textured weapon/scope primitives change the active texture page.
     // Commit them first, then render the manual-aim marker in an isolated
@@ -2219,16 +2232,33 @@ void drawGameplayHud(const HudTextureAtlas &textures,
           target_scale = game::originalAimReticleScale(
               camera.projection, depth_source->view_depth);
         }
-      } else if (target_locked && target_anchor) {
-        resolved = project_anchor(*target_anchor);
-        if (resolved) {
-          target_scale = game::originalAimReticleScale(camera.projection,
-                                                       resolved->view_depth);
+      } else if (target_locked) {
+        if (target_anchor) {
+          resolved = project_anchor(*target_anchor);
+          if (resolved) {
+            target_scale = game::originalTargetLockReticleScale(
+                camera.projection, resolved->view_depth);
+          }
+        }
+        if (!resolved && scratch.reticle_follow_initialized &&
+            scratch.reticle_target == reticle_target_identity) {
+          // Keep the last exact actor projection through a one-tick streaming
+          // or target-controller handoff instead of blinking the box away.
+          resolved =
+              ProjectedHudAnchor{scratch.reticle_x, scratch.reticle_y, 0.0};
+          target_scale = scratch.reticle_scale;
+        }
+        if (!resolved) {
+          // The retail follower camera already centres its selected actor.
+          // This covers only the first handoff tick before a scene mapping is
+          // available; the mapped Chest/Head anchor replaces it immediately.
+          resolved = ProjectedHudAnchor{static_cast<double>(center_x),
+                                        static_cast<double>(center_y), 0.0};
         }
       }
 
       if (resolved) {
-        updateReticleFollow(scratch, gameplay.aimTarget(), *resolved,
+        updateReticleFollow(scratch, reticle_target_identity, *resolved,
                             target_scale, instant_target_lock,
                             presentation_delta_seconds);
         center_x = static_cast<int>(std::lround(scratch.reticle_x));
@@ -2239,8 +2269,10 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       if (!reticle_visible) {
         reset_reticle_follow();
       } else {
+        const auto reticle_visibility = game::legacyTargetingOverlayVisibility(
+            first_person_aim || target_locked, hud_visibility);
         drawOriginalAimReticle(center_x, center_y, gameplay.headshotTargeted(),
-                               scratch.reticle_reveal * hud_visibility,
+                               scratch.reticle_reveal * reticle_visibility,
                                reticle_scale);
         if (gameplay.headshotTargeted()) {
           const auto callout = std::ranges::find_if(
@@ -2325,6 +2357,28 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                   return !state.present && state.opacity <= 0.0;
                 });
 
+  // Ordinary HUD geometry owns the retail interface phase, but FONT/TEXT
+  // packets below do not. Finish this pass before the independent letterbox
+  // and information layers are composited.
+  DrawSync(0);
+  GR_EnableStencil(1);
+  GR_EnableDepth(1);
+}
+
+void drawGameplayInformationLayer(
+    const HudTextureAtlas &textures, const game::GameplaySession &gameplay,
+    const InputPromptBindings &bindings, bool first_person_aim, int offset_x,
+    int offset_y, game::CampaignDifficulty difficulty,
+    GameplayHudScratch &scratch) {
+  const auto weapon = gameplay.hud().inventory().current();
+  const auto retail_optic_text =
+      first_person_aim && usesRetailEnglishOpticText(weapon);
+  DrawSync(0);
+  GR_SetBlendMode(BM_NONE);
+  GR_EnableDepth(0);
+  GR_SetDepthState(0, 0);
+  GR_EnableStencil(0);
+
   // All locales retain the guest's lifetime, type-on colors and slide timing.
   // Native layout changes only wording/reflow and maps the live retail glyph
   // count onto the presented string, so English and translated text reveal
@@ -2399,9 +2453,10 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     }
   }
 
-  // DrawPrim only queues immediate primitives in PsyCross. Flush the HUD
-  // before the scene is presented; ordering-table draws were already flushed.
+  // DrawPrim only queues immediate primitives in PsyCross. Flush the
+  // information layer before the scene is presented.
   DrawSync(0);
+  GR_EnableStencil(1);
   GR_EnableDepth(1);
 }
 

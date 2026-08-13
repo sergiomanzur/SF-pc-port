@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <assert.h>
 #include <string.h>
 #include <vector>
@@ -223,7 +224,7 @@ int g_cfg_bilinearFiltering = 0;
 int g_cfg_trilinearFiltering = 0;
 int g_cfg_anisotropicFiltering = 0;
 int g_cfg_smaa = 0;
-int g_cfg_volumetricFog = 0;
+int g_cfg_volumetricEffects = 0;
 int g_cfg_msaaSamples = 0;
 int g_cfg_aspectMode = PSYX_ASPECT_ORIGINAL_4_3;
 
@@ -451,9 +452,13 @@ int g_nativeFramebufferWidth;
 int g_nativeFramebufferHeight;
 int g_nativeFramebufferSamples;
 static int g_nativeFramePostprocessed;
+static float g_reversedDepthScale = -1.0f;
+static float g_reversedDepthBias = 0.0f;
 namespace {
-void PsyX_DestroyAtmosphere();
+void PsyX_DestroySkybox();
 void PsyX_DestroySMAA();
+void PsyX_DestroyVolumetrics();
+void PsyX_DestroyObjectShadows();
 }
 
 #if defined(RENDERER_OGL)
@@ -481,6 +486,8 @@ static void PsyX_AllocateNativeDepthTexture(GLenum internalFormat, int width,
 #endif
 
 static GLuint PsyX_GetNativeDrawFramebuffer() {
+  if (g_nativeFramePostprocessed)
+    return g_glNativeFramebuffer;
   return g_nativeFramebufferSamples > 1 ? g_glNativeMultisampleFramebuffer
                                         : g_glNativeFramebuffer;
 }
@@ -807,8 +814,10 @@ int GR_InitialiseRender(char *windowName, int width, int height,
 
 void GR_Shutdown() {
 #if USE_OPENGL
-  PsyX_DestroyAtmosphere();
+  PsyX_DestroySkybox();
   PsyX_DestroySMAA();
+  PsyX_DestroyVolumetrics();
+  PsyX_DestroyObjectShadows();
   glDeleteVertexArrays(MAX_NUM_VERTEX_BUFFERS, g_glVertexArray);
   glDeleteBuffers(MAX_NUM_VERTEX_BUFFERS, g_glVertexBuffer);
 
@@ -971,11 +980,7 @@ typedef struct {
   GLint texLoc;
   GLint lutLoc;
   GLint aliasLoc;
-  GLint sceneFogColorEnabledLoc;
-  GLint sceneFogGteLoc;
-  GLint sceneFogTerrainLoc;
   GLint appliedTextureFilterMode;
-  unsigned int appliedSceneFogRevision;
 #endif
 } PSXGPU_Shader;
 
@@ -1063,7 +1068,7 @@ GLint u_textureBlendModeLoc;
 #if defined(RENDERER_OGL) || (OGLES_VERSION == 3)
 
 #define GPU_DITHERING                                                       \
-  "	vec4 dither(vec4 color) { return applySceneAtmosphere(color); }\n"
+  "	vec4 dither(vec4 color) { return color; }\n"
 
 #define GPU_ARRAY_FUNC                                                         \
   "	float _idx2(vec2 array, int idx) { return array[idx]; }\n"
@@ -1071,7 +1076,7 @@ GLint u_textureBlendModeLoc;
 #else
 
 #define GPU_DITHERING                                                       \
-  "	vec4 dither(vec4 color) { return applySceneAtmosphere(color); }\n"
+  "	vec4 dither(vec4 color) { return color; }\n"
 
 #define GPU_ARRAY_FUNC                                                         \
   "	float _idx2(vec2 array, int idx) { return idx == 0 ? array.x : "           \
@@ -1164,6 +1169,27 @@ GLint u_textureBlendModeLoc;
 		return bilinearTextureSample(boundedPSX(P), coverage);
 	}
 
+	void accumulateDecodedColor(vec4 color, float texelCoverage, float weight,
+			inout vec4 premultiplied, inout float coverageSum,
+			inout float weightSum) {
+		float paletteAlpha = textureBlendMode == 0 ? 1.0 : color.a;
+		float alphaWeight = texelCoverage * paletteAlpha * weight;
+		premultiplied.rgb += color.rgb * alphaWeight;
+		premultiplied.a += alphaWeight;
+		coverageSum += texelCoverage * weight;
+		weightSum += weight;
+	}
+
+	vec4 resolveDecodedFilter(vec4 premultiplied, float coverageSum,
+			float weightSum, out float coverage) {
+		coverage = coverageSum / max(weightSum, 0.0001);
+		vec3 straightColor = premultiplied.rgb /
+			max(premultiplied.a, 0.0001);
+		float paletteAlpha = premultiplied.a /
+			max(coverageSum, 0.0001);
+		return vec4(straightColor, paletteAlpha);
+	}
+
 	vec4 decodedPointTextureSample(vec2 P, out float coverage) {
 		vec2 rg = samplePSX(floor(boundedPSX(P) + vec2(0.5)));
 		coverage = float(rg.r + rg.g > 0.0);
@@ -1177,16 +1203,14 @@ GLint u_textureBlendModeLoc;
 			inout float weightSum) {
 		float tapCoverage;
 		vec4 tapColor = decodedPointTextureSample(P, tapCoverage);
-		premultiplied += tapColor * tapCoverage * weight;
-		coverageSum += tapCoverage * weight;
-		weightSum += weight;
+		accumulateDecodedColor(tapColor, tapCoverage, weight,
+			premultiplied, coverageSum, weightSum);
 	}
 
 	vec4 resolveTileFilter(vec4 premultiplied, float coverageSum,
 			float weightSum, out float coverage) {
-		coverage = coverageSum / max(weightSum, 0.0001);
-		return (premultiplied / max(weightSum, 0.0001)) /
-			max(coverage, 0.0001);
+		return resolveDecodedFilter(premultiplied, coverageSum, weightSum,
+			coverage);
 	}
 
 	vec4 tileMipLevelTextureSample(vec2 P, float lod, out float coverage) {
@@ -1221,10 +1245,14 @@ GLint u_textureBlendModeLoc;
 		vec4 lowColor = tileMipLevelTextureSample(P, lowLod, lowCoverage);
 		vec4 highColor = tileMipLevelTextureSample(P, highLod, highCoverage);
 		float blend = fract(lod);
-		coverage = mix(lowCoverage, highCoverage, blend);
-		vec4 premultiplied = mix(lowColor * lowCoverage,
-			highColor * highCoverage, blend);
-		return premultiplied / max(coverage, 0.0001);
+		vec4 premultiplied = vec4(0.0);
+		float coverageSum = 0.0;
+		float weightSum = 0.0;
+		accumulateDecodedColor(lowColor, lowCoverage, 1.0 - blend,
+			premultiplied, coverageSum, weightSum);
+		accumulateDecodedColor(highColor, highCoverage, blend,
+			premultiplied, coverageSum, weightSum);
+		return resolveTileFilter(premultiplied, coverageSum, weightSum, coverage);
 	}
 
 	vec4 trilinearTextureSample(vec2 P, out float coverage) {
@@ -1275,16 +1303,20 @@ GLint u_textureBlendModeLoc;
 			vec4 tapColor = bilinearTextureSample(
 				boundedPSX(P + footprintX * offset.x +
 					footprintY * offset.y), tapCoverage);
-			areaPremultiplied += tapColor * tapCoverage * weight;
-			areaCoverageSum += tapCoverage * weight;
-			areaWeightSum += weight;
+			accumulateDecodedColor(tapColor, tapCoverage, weight,
+				areaPremultiplied, areaCoverageSum, areaWeightSum);
 		}
-		float filteredCoverage = areaCoverageSum / areaWeightSum;
-		vec4 filteredPremultiplied = areaPremultiplied / areaWeightSum;
-		coverage = mix(centerCoverage, filteredCoverage, filterBlend);
-		vec4 premultiplied = mix(centerColor * centerCoverage,
-			filteredPremultiplied, filterBlend);
-		return premultiplied / max(coverage, 0.0001);
+		float filteredCoverage;
+		vec4 filteredColor = resolveTileFilter(areaPremultiplied,
+			areaCoverageSum, areaWeightSum, filteredCoverage);
+		vec4 premultiplied = vec4(0.0);
+		float coverageSum = 0.0;
+		float weightSum = 0.0;
+		accumulateDecodedColor(centerColor, centerCoverage, 1.0 - filterBlend,
+			premultiplied, coverageSum, weightSum);
+		accumulateDecodedColor(filteredColor, filteredCoverage, filterBlend,
+			premultiplied, coverageSum, weightSum);
+		return resolveTileFilter(premultiplied, coverageSum, weightSum, coverage);
 	}
 
 	vec4 mipmappedAnisotropicTextureSample(vec2 P, out float coverage) {
@@ -1311,9 +1343,8 @@ GLint u_textureBlendModeLoc;
 			float tapCoverage;
 			vec4 tapColor = trilinearTextureSampleAtLod(
 				P + majorAxis * position, lod, tapCoverage);
-			premultiplied += tapColor * tapCoverage;
-			coverageSum += tapCoverage;
-			weightSum += 1.0;
+			accumulateDecodedColor(tapColor, tapCoverage, 1.0,
+				premultiplied, coverageSum, weightSum);
 		}
 		return resolveTileFilter(premultiplied, coverageSum, weightSum,
 			coverage);
@@ -1334,6 +1365,7 @@ GLint u_textureBlendModeLoc;
   GPU_FETCH_VRAM_FUNC                                                          \
   GPU_ARRAY_FUNC                                                               \
   GPU_SAMPLE_TEXTURE_##bit##BIT_FUNC                                           \
+      "	uniform int textureBlendMode;\n"                                       \
       "	uniform sampler2D s_rgLut;\n"                                          \
       "	const vec2 c_LUTTexel = vec2(1.0 / 256.0, 1.0 / 256.0);\n"             \
       "	vec4 lut(vec2 rg) { return texture2D(s_rgLut, rg - c_LUTTexel * "      \
@@ -1381,7 +1413,6 @@ GLint u_textureBlendModeLoc;
       "		return t;\n"                                                          \
       "	}\n"                                                                   \
       "	uniform int textureFilterMode;\n"                                      \
-      "	uniform int textureBlendMode;\n"                                       \
       "	void main() {\n"                                                       \
       "		float coverage = 1.0;\n"                                              \
       "		vec4 color;\n"                                                        \
@@ -1422,34 +1453,6 @@ static const char *gpu_shader_common = R"(
 	FLAT varying vec4 v_page_clut;
 	FLAT varying float v_alias_page;
 	FLAT varying vec4 v_texbounds;
-	varying float v_z;
-	uniform vec4 u_scene_fog_color_enabled;
-	uniform vec4 u_scene_fog_gte;
-	uniform vec2 u_scene_fog_terrain;
-
-	vec4 applySceneAtmosphere(vec4 source) {
-		if (u_scene_fog_color_enabled.w < 0.5 || v_z <= 0.0)
-			return source;
-		float cameraDepth = v_z * 128.0 / 1.35;
-		float quotient = clamp(
-			u_scene_fog_gte.z / max(cameraDepth, 0.001) * 65536.0,
-			0.0, 131071.0);
-		float gteFog = clamp(
-			(u_scene_fog_gte.y + u_scene_fog_gte.x * quotient) /
-				16777216.0,
-			0.0, 1.0);
-		float terrainDistance =
-			floor(floor(cameraDepth + 0.5) * 0.75) -
-			u_scene_fog_terrain.x;
-		float terrainFog = clamp(
-			terrainDistance * u_scene_fog_terrain.y, 0.0, 1.0);
-		float retailFog = mix(terrainFog, gteFog, u_scene_fog_gte.w);
-		float onset = smoothstep(0.04, 0.45, retailFog);
-		float air = 1.0 - exp(-sqrt(retailFog) * 0.52);
-		float volume = clamp(onset * air * (1.0 - retailFog), 0.0, 0.16);
-		source.rgb = mix(source.rgb, u_scene_fog_color_enabled.rgb, volume);
-		return source;
-	}
 )";
 
 const char *gpu_shader_4 = GPU_FRAGMENT_SAMPLE_SHADER(4);
@@ -1515,7 +1518,6 @@ const char *gpu_shader_32_rgba =
   "		v_page_clut.zw += c_UVFudge;\n" GTE_PERSPECTIVE_CORRECTION     \
   "		gl_Position.xy *= mix(PresentationScale, vec2(1.0), "                     \
   "clamp(a_extra.z, 0.0, 1.0));\n"                                             \
-  "		v_z = a_zw.y > 0.0 ? a_zw.x : -1.0;\n"                                  \
   "	}\n"
 
 int GR_Shader_CheckShaderStatus(GLuint shader) {
@@ -1697,8 +1699,10 @@ ShaderID GR_Shader_Compile(const char *source, int isPsxShader) {
 #error
 #endif
 
+#include "PsyX_skybox.inc"
 #include "PsyX_smaa.inc"
-#include "PsyX_atmosphere.inc"
+#include "PsyX_volumetrics.inc"
+#include "PsyX_object_shadows.inc"
 
 //--------------------------------------------------------------------------------------------
 
@@ -1792,14 +1796,7 @@ void GR_CompilePSXShader(PSXGPU_Shader *sh, const char *source) {
   sh->texLoc = glGetUniformLocation(sh->shader, "s_texture");
   sh->lutLoc = glGetUniformLocation(sh->shader, "s_rgLut");
   sh->aliasLoc = glGetUniformLocation(sh->shader, "s_aliasTexture");
-  sh->sceneFogColorEnabledLoc =
-      glGetUniformLocation(sh->shader, "u_scene_fog_color_enabled");
-  sh->sceneFogGteLoc =
-      glGetUniformLocation(sh->shader, "u_scene_fog_gte");
-  sh->sceneFogTerrainLoc =
-      glGetUniformLocation(sh->shader, "u_scene_fog_terrain");
   sh->appliedTextureFilterMode = -1;
-  sh->appliedSceneFogRevision = 0U;
 #if USE_PGXP
   sh->projection3DLoc = glGetUniformLocation(sh->shader, "Projection3D");
 #endif
@@ -1877,8 +1874,10 @@ int GR_InitialisePSX() {
   glGenFramebuffers(1, &g_glNativeMultisampleFramebuffer);
   glGenRenderbuffers(1, &g_glNativeMultisampleColorRenderbuffer);
   glGenRenderbuffers(1, &g_glNativeMultisampleDepthRenderbuffer);
-  PsyX_InitialiseAtmosphere();
+  PsyX_InitialiseSkybox();
   PsyX_InitialiseSMAA();
+  PsyX_InitialiseVolumetrics();
+  PsyX_InitialiseObjectShadows();
 
   // gen framebuffer
   {
@@ -2099,6 +2098,8 @@ void GR_Perspective3D(const float fov, const float width, const float height,
   float depthScale;
   float depthBias;
   GR_CalculateReversedDepthProjection(zNear, zFar, &depthScale, &depthBias);
+  g_reversedDepthScale = depthScale;
+  g_reversedDepthBias = depthBias;
 
   float persp[16] = {w, 0, 0,          0, 0, h, 0,         0,
                      0, 0, depthScale, 1, 0, 0, depthBias, 0};
@@ -2260,10 +2261,6 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat,
     u_texelSizeLoc = g_gpu_shader_32_rgba.texelSizeLoc;
     break;
   }
-
-#if USE_OPENGL
-  PsyX_ApplySceneFogUniforms(activeShader);
-#endif
 
   if (g_dbg_texturelessMode) {
     texture = g_whiteTexture;
@@ -2880,26 +2877,20 @@ void GR_SetDepthState(int testEnable, int writeEnable) {
 #endif
 }
 
-void GR_ClearDepthBuffer(void) {
-#if USE_OPENGL
-  // glClear obeys the depth write mask. Preserve the caller's write state so a
-  // transparent run stays test-only after an OT depth discontinuity.
-  const int restoreWrite = g_PreviousDepthWrite;
-  glDepthMask(GL_TRUE);
-#ifdef RENDERER_OGLES
-  glClearDepthf(0.0f);
-#else
-  glClearDepth(0.0f);
-#endif
-  glClear(GL_DEPTH_BUFFER_BIT);
-  if (restoreWrite == 0)
-    glDepthMask(GL_FALSE);
-#endif
-}
-
 void GR_EnableDepth(int enable) {
   g_RequestedDepthMode = enable ? 1 : 0;
   GR_SetDepthState(enable, enable);
+}
+
+void GR_EnableStencil(int enable) {
+#if USE_OPENGL
+  if (enable)
+    glEnable(GL_STENCIL_TEST);
+  else
+    glDisable(GL_STENCIL_TEST);
+#else
+  (void)enable;
+#endif
 }
 
 void GR_SetStencilMode(int drawPrim) {
@@ -2998,9 +2989,9 @@ void GR_SetBlendMode(BlendMode blendMode) {
 }
 
 void GR_SetPolygonOffset(float slope, float units) {
-  // GPU split submission restores the generic polygon state for every split.
-  // Keep the receiver bias selected by the two-pass shadow operation until
-  // that operation ends; otherwise coplanar wall portions flicker per split.
+  // GPU split submission preserves the caller-selected offset until its pass
+  // completes. Keep the receiver bias selected by the two-pass shadow
+  // operation unchanged while that operation owns the polygon state.
   if (g_ShadowStencilPhase != 0)
     return;
 

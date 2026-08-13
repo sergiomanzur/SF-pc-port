@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0-public-test.28",
+    [string]$Version = "0.1.0-public-test.29",
     [string]$Configuration = "Release"
 )
 
@@ -112,6 +112,23 @@ foreach ($file in @("dossier_01.png", "dossier_02.png", "dossier_03.png", "dossi
         throw "Required dossier image is missing: $source"
     }
     Copy-Item -LiteralPath $source -Destination $dossierDestination
+}
+
+$skyboxSource = Join-Path $buildDir "assets\skyboxes"
+$skyboxDestination = Join-Path $packageDir "assets\skyboxes"
+New-Item -ItemType Directory -Path $skyboxDestination | Out-Null
+foreach ($file in @(
+    "dc_night.bmp",
+    "park_storm.bmp",
+    "kazakhstan_night.bmp",
+    "stronghold_dawn.bmp",
+    "almaty_industrial.bmp"
+)) {
+    $source = Join-Path $skyboxSource $file
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "Required mission skybox is missing: $source"
+    }
+    Copy-Item -LiteralPath $source -Destination $skyboxDestination
 }
 
 foreach ($file in $vcFiles) {

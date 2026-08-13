@@ -156,6 +156,8 @@ originalAimReticleGeometry(bool head_target) noexcept;
 // calibrated scale is 0.8 at the 3072-unit reference depth.
 [[nodiscard]] double originalAimReticleScale(std::int32_t projection,
                                              double view_depth) noexcept;
+[[nodiscard]] double originalTargetLockReticleScale(std::int32_t projection,
+                                                    double view_depth) noexcept;
 [[nodiscard]] OriginalAimReticleGeometry
 scaledOriginalAimReticleGeometry(bool head_target, double scale) noexcept;
 

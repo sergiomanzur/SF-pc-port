@@ -1,6 +1,6 @@
 # Refactor audit
 
-Updated 2026-08-04. Counts are an inventory aid and may drift as code changes.
+Updated 2026-08-08. Counts are an inventory aid and may drift as code changes.
 
 ## Baseline
 
@@ -29,6 +29,15 @@ those invariants explicit.
 - Prepared retail vertex-light matrices once per presented light instead of once per
   illuminated vertex.
 - Removed the second full `SceneObject` copy from presentation interpolation.
+- Replaced the 2,859-line Win32 launcher monolith and its nested modal message
+  loops with one resizable shell and four embedded pages: Launch, Graphics,
+  Controls and Dossiers.
+- Split launcher persistence, text, GDI resources, controller capture and each
+  page into explicit ownership modules; all launcher settings now remain staged
+  until Play.
+- Removed the experimental shader-based Volumetric Fog path, its public flags,
+  CLI switches and renderer lifecycle while preserving retail depth cue and the
+  separate volumetric particle-effects option.
 - Enabled optional Release IPO/LTO.
 - Skipped zero-vertex PsyCross VBO uploads and empty log flushes.
 - Fused HMD pose resolution, ground-plane evaluation and world transformation into

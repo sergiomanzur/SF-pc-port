@@ -70,11 +70,10 @@ buildWorldPresentationEnvelope(std::span<const std::uint16_t> retained,
                                std::span<const std::uint16_t> active,
                                bool reset_for_new_room);
 
-inline constexpr std::size_t world_terrain_lookahead_steps = 3U;
-
 // Native terrain may prepare one authored look-ahead step at a time before
-// the retail portal switch. The session chains three connected steps;
-// objects, collision and gameplay continue using the visible envelope above.
+// the retail portal switch. The session follows the complete connected route;
+// resource admission still stops at the first model which does not fit.
+// Objects, collision and gameplay continue using the visible envelope above.
 [[nodiscard]] std::vector<std::uint16_t>
 buildWorldTerrainEnvelope(std::span<const std::uint16_t> visible,
                           std::span<const std::uint16_t> prefetched,
@@ -176,6 +175,31 @@ legacyGuestUsesSecondaryItemModel(std::uint32_t class_id,
                                   std::uint8_t instance_flags) noexcept {
   return (class_id == 0x4fU || class_id == 0x50U || class_id == 0x63U) &&
          (instance_flags & legacy_item_consumed_latch) != 0U;
+}
+
+// Weapon crates are identified by both their retail handler class and their
+// authored closed/open model pair. Class alone is shared by mission props,
+// while the model name alone is not proof that the item lifecycle is active.
+[[nodiscard]] constexpr bool
+legacyWeaponCratePresentation(std::uint32_t class_id,
+                              std::string_view model_name) noexcept {
+  return (class_id == 0x4fU || class_id == 0x50U) &&
+         (model_name == "WEPCRATE.GMD" || model_name == "WEPCRATX.GMD");
+}
+
+// SUBWAY2 guest slot/source 279 is the authored TNT-cache trigger prop. Its
+// closed/open model pair supplies placement metadata for linked source 224,
+// but retail does not submit either model for presentation. Require the exact
+// static guest slot as well as source identity because runtime clones retain
+// their definition template's source index.
+[[nodiscard]] constexpr bool legacyAuthoredObjectPresentationHidden(
+    std::uint32_t mission_index, std::int32_t guest_slot,
+    std::uint16_t source_index,
+    std::optional<std::uint32_t> definition_index, std::uint32_t class_id,
+    std::string_view model_name) noexcept {
+  return mission_index == 1U && guest_slot == 279 && source_index == 279U &&
+         definition_index == 20U && class_id == 0x57U &&
+         (model_name == "TNTCRATE.GMD" || model_name == "TNTCRATX.GMD");
 }
 
 // HMDs used by story actors and bosses do not all have the common 15-part
@@ -286,6 +310,26 @@ legacyManualAimControlAvailable(bool control_locked, bool target_lock_active,
 }
 
 [[nodiscard]] constexpr bool
+legacyTargetLockSignalActive(bool host_target_lock_held,
+                             bool player_target_controller_ready,
+                             bool player_has_target, bool target_slot_valid,
+                             bool target_alive) noexcept {
+  // DAT_80116b7c is not maintained by every chase-mode overlay. The exact
+  // 20 Hz R1 sample and the player's live target-controller link are.
+  return host_target_lock_held && player_target_controller_ready &&
+         player_has_target && target_slot_valid && target_alive;
+}
+
+[[nodiscard]] constexpr bool
+legacyTargetLockHudPresentationActive(bool host_manual_aim,
+                                      bool target_lock_signal_active,
+                                      bool mission_terminal) noexcept {
+  // Scene residency and the normal-HUD phase are presentation details and
+  // cannot cancel an established R1 lock.
+  return !host_manual_aim && target_lock_signal_active && !mission_terminal;
+}
+
+[[nodiscard]] constexpr bool
 legacyTargetFollowCameraPresentationActive(bool previously_active,
                                            bool camera_scripted,
                                            bool target_lock_active) noexcept {
@@ -366,6 +410,44 @@ legacyLetterboxPresentationActive(bool mission_intro_active,
 legacyGameplayHudPresentationActive(bool mission_complete, bool hud_hidden,
                                     bool mission_failed) noexcept {
   return !mission_complete && (!hud_hidden || mission_failed);
+}
+
+[[nodiscard]] constexpr bool
+legacyGameplayHudFrameSubmissionRequired(bool normal_hud_active,
+                                         bool first_person_aim,
+                                         bool target_lock_active) noexcept {
+  // Scope/scanner and R1 targeting overlays remain authored interface layers
+  // while FUN_800410d0 has already detached the ordinary gameplay HUD.
+  return normal_hud_active || first_person_aim || target_lock_active;
+}
+
+struct LegacyGameplayUiSubmission final {
+  bool gameplay_hud{};
+  bool information{};
+
+  [[nodiscard]] friend constexpr bool
+  operator==(const LegacyGameplayUiSubmission &,
+             const LegacyGameplayUiSubmission &) = default;
+};
+
+[[nodiscard]] constexpr LegacyGameplayUiSubmission
+classifyLegacyGameplayUiSubmission(bool normal_hud_active,
+                                   bool first_person_aim,
+                                   bool target_lock_active,
+                                   bool information_message_active) noexcept {
+  const auto gameplay_hud = legacyGameplayHudFrameSubmissionRequired(
+      normal_hud_active, first_person_aim, target_lock_active);
+  // Retail FONT/TEXT owns a separate lifetime from FUN_800410d0 and the
+  // 240 <-> 160 viewport. Preserve the old combined pass while the HUD is
+  // submitted, but never let a closed HUD/letterbox suppress a live message.
+  return {.gameplay_hud = gameplay_hud,
+          .information = gameplay_hud || information_message_active};
+}
+
+[[nodiscard]] constexpr double
+legacyTargetingOverlayVisibility(bool targeting_active,
+                                 double normal_hud_visibility) noexcept {
+  return targeting_active ? 1.0 : std::clamp(normal_hud_visibility, 0.0, 1.0);
 }
 
 [[nodiscard]] constexpr bool legacyTerminalFailureFrameSubmissionRequired(
@@ -535,6 +617,9 @@ enum class ObjectVisualEffect : std::uint8_t {
   police_lightbar,
   billboard_glow,
   lamp_fixture,
+  smoke_volume,
+  fire_volume,
+  fog_volume,
   scanner_xray,
 };
 
@@ -543,6 +628,29 @@ enum class ObjectVisualEffect : std::uint8_t {
 [[nodiscard]] constexpr bool
 legacyLampBillboardModel(std::string_view model_stem) noexcept {
   return model_stem == "GLIT" || model_stem == "YLIT";
+}
+
+[[nodiscard]] constexpr bool
+legacyLampBillboardPresentation(std::uint32_t class_id,
+                                std::string_view model_stem) noexcept {
+  // Retail class 0x15 is the complete family of planar lamp coronas, not a
+  // fixture housing. Missions use many names besides GLIT/YLIT.
+  return class_id == 0x15U || legacyLampBillboardModel(model_stem);
+}
+
+[[nodiscard]] constexpr bool
+legacySmokeVolumeModel(std::string_view resource_name) noexcept {
+  return resource_name == "SMOKE.GMD";
+}
+
+[[nodiscard]] constexpr bool legacyFireVolumeModel(
+    std::uint32_t class_id, std::string_view model_stem) noexcept {
+  return class_id == 0x5aU && model_stem == "FIRE";
+}
+
+[[nodiscard]] constexpr bool legacyFogVolumeModel(
+    std::uint32_t class_id, std::string_view model_stem) noexcept {
+  return class_id == 0x53U && model_stem == "VAPOR";
 }
 
 [[nodiscard]] constexpr bool
@@ -573,16 +681,28 @@ legacyVirusScannerMarker(std::uint32_t mission_index, std::uint32_t class_id,
 [[nodiscard]] constexpr bool objectVisualEffectReceivesSceneLighting(
     ObjectVisualEffect effect, bool semi_transparent = false) noexcept {
   return effect == ObjectVisualEffect::none ||
+         effect == ObjectVisualEffect::smoke_volume ||
+         effect == ObjectVisualEffect::fog_volume ||
          (effect == ObjectVisualEffect::lamp_fixture && !semi_transparent);
 }
 
 [[nodiscard]] constexpr bool
 objectVisualEffectReceivesDepthCue(ObjectVisualEffect effect,
-                                   bool = false) noexcept {
-  // Emissive intensity is independent from room lighting, but it is not
-  // independent from distance fog. Only the scanner return intentionally
-  // survives the ordinary scene depth-cue path.
-  return effect != ObjectVisualEffect::scanner_xray;
+                                   bool semi_transparent = false) noexcept {
+  // Far-colour interpolation changes the hue of additive emitters. Their
+  // energy is attenuated separately, while ordinary opaque geometry keeps
+  // the retail DPCS depth cue.
+  switch (effect) {
+  case ObjectVisualEffect::billboard_glow:
+  case ObjectVisualEffect::police_lightbar:
+  case ObjectVisualEffect::fire_volume:
+  case ObjectVisualEffect::scanner_xray:
+    return false;
+  case ObjectVisualEffect::lamp_fixture:
+    return !semi_transparent;
+  default:
+    return true;
+  }
 }
 
 struct ObjectModel {
@@ -727,6 +847,7 @@ struct LegacyExplParticle {
   std::uint8_t red{};
   std::uint8_t green{};
   std::uint8_t blue{};
+  bool attached_explosion_sequence{};
   std::int16_t pool_index{-1};
 };
 
@@ -996,7 +1117,14 @@ public:
     return aim_target_;
   }
   [[nodiscard]] bool targetLocked() const noexcept {
-    return locked_target_.has_value();
+    return !host_manual_aim_ && target_lock_presentation_active_;
+  }
+  [[nodiscard]] bool targetLockInputHeld() const noexcept {
+    return host_target_lock_held_;
+  }
+  [[nodiscard]] std::optional<std::int16_t>
+  targetLockGuestSlot() const noexcept {
+    return target_lock_guest_slot_;
   }
   [[nodiscard]] const std::optional<LegacyNativePoint> &
   retailAimPoint() const noexcept {
@@ -1388,6 +1516,8 @@ private:
   std::optional<std::uint16_t> aim_target_;
   bool headshot_targeted_{};
   std::optional<std::uint16_t> locked_target_;
+  bool target_lock_presentation_active_{};
+  std::optional<std::int16_t> target_lock_guest_slot_;
   std::optional<LegacyNativePoint> retail_aim_point_;
   GameplayShotEvent last_shot_;
   std::vector<GameplayEffect> effects_;
@@ -1417,6 +1547,7 @@ private:
   bool pending_grenade_throw_down_{};
   bool pending_grenade_throw_down_staged_{};
   bool host_manual_aim_{};
+  bool host_target_lock_held_{};
   bool retail_host_aim_active_{};
   unsigned int first_person_aim_roll_block_updates_{};
   bool first_person_aim_release_rearm_required_{};

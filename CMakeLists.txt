@@ -196,6 +196,7 @@ if(SF_ENABLE_PSYCROSS)
         src/platform/psycross_font_texture.cpp
         src/platform/psycross_host.cpp
         src/platform/psycross_mission_start.cpp
+        src/platform/psycross_mission_skybox.cpp
         src/platform/psycross_movie_player.cpp
         src/platform/psycross_retail_briefing.cpp
         src/platform/psycross_runtime_guards.cpp
@@ -222,7 +223,15 @@ if(SF_ENABLE_PSYCROSS)
     sf_set_project_warnings(sf_psycross_backend)
 
     add_executable(syphon_filter
-        apps/syphon_filter/launcher.cpp
+        apps/syphon_filter/launcher/controls_page.cpp
+        apps/syphon_filter/launcher/controller_capture.cpp
+        apps/syphon_filter/launcher/dossier_page.cpp
+        apps/syphon_filter/launcher/graphics_page.cpp
+        apps/syphon_filter/launcher/launch_page.cpp
+        apps/syphon_filter/launcher/settings.cpp
+        apps/syphon_filter/launcher/shell.cpp
+        apps/syphon_filter/launcher/text.cpp
+        apps/syphon_filter/launcher/theme.cpp
         apps/syphon_filter/main.cpp
     )
     if(WIN32)
@@ -257,6 +266,31 @@ if(SF_ENABLE_PSYCROSS)
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/locales"
             "$<TARGET_FILE_DIR:syphon_filter>/locales"
         VERBATIM)
+    set(SF_SKYBOX_ASSET_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/skyboxes")
+    set(SF_SKYBOX_ASSETS
+        dc_night.bmp
+        park_storm.bmp
+        kazakhstan_night.bmp
+        stronghold_dawn.bmp
+        almaty_industrial.bmp)
+    foreach(SF_SKYBOX_ASSET IN LISTS SF_SKYBOX_ASSETS)
+        if(NOT EXISTS "${SF_SKYBOX_ASSET_DIR}/${SF_SKYBOX_ASSET}")
+            message(FATAL_ERROR
+                "Missing mission skybox: ${SF_SKYBOX_ASSET}")
+        endif()
+    endforeach()
+    add_custom_command(TARGET syphon_filter POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "$<TARGET_FILE_DIR:syphon_filter>/assets/skyboxes"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${SF_SKYBOX_ASSET_DIR}/dc_night.bmp"
+            "${SF_SKYBOX_ASSET_DIR}/park_storm.bmp"
+            "${SF_SKYBOX_ASSET_DIR}/kazakhstan_night.bmp"
+            "${SF_SKYBOX_ASSET_DIR}/stronghold_dawn.bmp"
+            "${SF_SKYBOX_ASSET_DIR}/almaty_industrial.bmp"
+            "$<TARGET_FILE_DIR:syphon_filter>/assets/skyboxes"
+        VERBATIM)
     if(WIN32)
         target_link_libraries(syphon_filter PRIVATE user32 comdlg32 gdiplus)
         set(SF_DOSSIER_SCREEN_DIR
@@ -282,6 +316,12 @@ if(SF_ENABLE_PSYCROSS)
                 "${SF_DOSSIER_SCREEN_DIR}/dossier_04.png"
                 "$<TARGET_FILE_DIR:syphon_filter>/assets/dossiers/screens"
             VERBATIM)
+    endif()
+    if(MSVC)
+        # The launcher's wide-string catalogue is stored as UTF-8. Without an
+        # explicit source character set MSVC decodes Cyrillic through the
+        # machine ANSI code page, producing mojibake before Win32 sees it.
+        target_compile_options(syphon_filter PRIVATE /utf-8)
     endif()
     sf_set_project_warnings(syphon_filter)
 

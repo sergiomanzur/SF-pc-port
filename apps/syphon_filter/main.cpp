@@ -114,7 +114,8 @@ void printUsage() {
          "--resolution=WIDTHxHEIGHT "
          "--msaa=0|2|4|8 --bilinear --nearest --trilinear "
          "--no-trilinear --anisotropic --no-anisotropic --smaa --no-smaa "
-         "--volumetric-fog --no-volumetric-fog "
+         "--volumetric-effects --no-volumetric-effects "
+         "--skybox --no-skybox "
          "--aspect-adaptive --aspect-4-3 "
          "--vsync --no-vsync --fps-limit=0|20..1000\n"
       << "Controller options: "
@@ -169,10 +170,15 @@ int main(int argc, char **argv) {
         graphics.msaa_samples = 0;
       } else if (argument == "--no-smaa") {
         graphics.smaa = false;
-      } else if (argument == "--volumetric-fog") {
-        graphics.volumetric_fog = true;
-      } else if (argument == "--no-volumetric-fog") {
-        graphics.volumetric_fog = false;
+      } else if (argument == "--volumetric-effects") {
+        graphics.volumetric_effects = true;
+      } else if (argument == "--no-volumetric-effects") {
+        graphics.volumetric_effects = false;
+      } else if (argument == "--skybox" || argument == "--skyboxes") {
+        graphics.mission_skyboxes = true;
+      } else if (argument == "--no-skybox" ||
+                 argument == "--no-skyboxes") {
+        graphics.mission_skyboxes = false;
       } else if (argument == "--vsync") {
         graphics.vsync = true;
       } else if (argument == "--no-vsync") {
@@ -291,8 +297,8 @@ int main(int argc, char **argv) {
     }
     auto mission_index = requested_mission.value_or(0U);
     auto cue_path = launch->cue_path;
-    if (show_launcher && !sf::platform::showGraphicsLauncher(
-                             graphics, input, language, cue_path)) {
+    if (show_launcher &&
+        !sf::platform::showLauncher(graphics, input, language, cue_path)) {
       return 0;
     }
     if (!sf::game::localizationPackAvailable(language)) {

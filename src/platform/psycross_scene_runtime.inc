@@ -73,6 +73,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
   CombatEffectTextureAtlas effect_textures{mission};
   PoliceLightbarAnimation police_lightbar_animation;
   RetailScrimAnimation retail_scrim_animation;
+  MissionSkybox mission_skybox{mission.definition().index,
+                               mission_skyboxes_};
   // TextureStreamer already uploaded VLF and the effect atlas occupies a
   // reserved page. Reconcile only bank-specific scene data here; invalidating
   // and restoring both atlases doubled the synchronous startup transfer.
@@ -94,8 +96,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
                 gameplay.player().yaw);
 
   std::vector<OT_TAG> ordering_table(ordering_table_size);
-  std::vector<OT_TAG> prefetch_ordering_table(ordering_table_size);
-  std::vector<OT_TAG> prefetch_fire_ordering_table(ordering_table_size);
   std::vector<OT_TAG> optic_trail_ordering_table(ordering_table_size);
   std::vector<OT_TAG> optic_subject_ordering_table(ordering_table_size);
   std::vector<OT_TAG> shadow_ordering_table(ordering_table_size);
@@ -110,7 +110,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
   WorldPolygonLightingCache world_lighting_cache;
   LocalSceneLightingCache local_scene_lighting_cache;
 
-  WorldChunkAppearance world_chunk_appearance;
   WeaponEffectsScratch weapon_effects_scratch;
   HmdPoseScratch hmd_pose_scratch;
   std::vector<WorldCalloutAnchor> world_callout_scratch;
@@ -153,6 +152,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   double simulation_accumulator_seconds = 0.0;
   double audio_accumulator_seconds = 0.0;
   double presentation_delta_seconds = 0.0;
+  double volumetric_effect_time_seconds = 0.0;
   game::GameplayInput latched_gameplay_input{};
   sf::platform::PlayerLookLatch latched_player_look;
   sf::platform::PlayerLookDisplayIntegrator display_player_look;
@@ -249,7 +249,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
     dynamic_light_scratch.reset();
     world_lighting_cache.reset();
 
-    world_chunk_appearance.reset();
     primitives.invalidateCapacityPlan();
     weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
     muzzle_flash_edges.observe(gameplay.effects());
@@ -449,18 +448,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
           gameplay, current_render_presentation.scrim, textures);
     }
   };
-  const auto prime_checkpoint_world_chunks = [&] {
-    const auto prefetched = gameplay.prefetchedModels();
-    auto admitted_count = std::size_t{};
-    while (admitted_count < prefetched.size() &&
-           textures.worldLookaheadAdmitted(prefetched[admitted_count])) {
-      ++admitted_count;
-    }
-    world_chunk_appearance.prime(gameplay.presentationModels(),
-                                 prefetched.first(admitted_count),
-                                 current_render_presentation.player.x,
-                                 current_render_presentation.player.z);
-  };
   const auto draw_gameplay_frame = [&](unsigned int effect_updates) {
     glass_shatter.observe(gameplay, current_render_presentation);
     // Resource selectors are published atomically by the 20 Hz guest. Do not
@@ -523,6 +510,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  ? first_person_near_clip_depth
                                  : near_clip_depth;
     const auto &camera = presentation.camera;
+    mission_skybox.applyBoundaryAtmosphere(presentation.environment);
     applyRetailEnvironment(presentation.environment, camera.projection,
                            presentation.retail_environment_active);
     SetGeomScreen(camera.projection);
@@ -572,21 +560,21 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  mission_keycard_pickup_active,
                                  presentation.dropped_items,
                                  presentation.projectiles);
-    const auto prefetched_models = gameplay.prefetchedModels();
-    auto admitted_prefetch_count = std::size_t{};
-    for (const auto model : prefetched_models) {
-      if (!textures.worldLookaheadAdmitted(model)) {
-        break;
-      }
-      ++admitted_prefetch_count;
-    }
-    const auto admitted_prefetch =
-        prefetched_models.first(admitted_prefetch_count);
-    world_chunk_appearance.advance(
-        gameplay.presentationModels(), presentation_delta_seconds,
-        admitted_prefetch, presentation.player.x, presentation.player.z);
+    const auto volumes_requested = g_cfg_volumetricEffects != 0;
+    static_cast<void>(GR_BeginVolumetricFrame(
+        presentation.retail_virus_scanner_overlay || !volumes_requested ? 0
+                                                                       : 1));
+    const auto native_skybox_active =
+        presentation.retail_environment_active && mission_skybox.ready();
+    const auto render_retail_scrim =
+        presentation.scrim.visible &&
+        !(native_skybox_active && mission_skybox.replacesRetailScrim());
+    // This is the exact connected prefix whose cumulative texture selectors
+    // were admitted and uploaded by ensure() above. It still enters the one
+    // original linked-list world OT; lookahead never gets a separate pass.
+    const auto world_render_models = textures.worldRenderModels(gameplay);
     const auto stats = renderWorld(
-        gameplay, textures, hud_textures, fire_animation,
+        gameplay, world_render_models, textures, hud_textures, fire_animation,
         textures.firePlacement(), effect_textures, actor_animations, actor_tick,
         gameplay.playerAnimationTick(), weapon_presentation_edges.events(),
         weapon_presentation_edges.muzzleFlashes(), muzzle_flash_edges.flashes(),
@@ -595,50 +583,44 @@ SceneViewerResult PsyCrossSceneViewer::run(
         weapon_presentation_edges.sprites(),
         weapon_presentation_edges.rawPackets(), glass_shatter.shards(),
         interpolation_amount, previous_render_presentation,
-        current_render_presentation, presentation, view, ordering_table,
-        prefetch_ordering_table, optic_trail_ordering_table,
+        current_render_presentation, presentation, view,
+        ordering_table, optic_trail_ordering_table,
         optic_subject_ordering_table, shadow_ordering_table,
         scrim_ordering_table, scanner_xray_ordering_table,
-        guest_overlay_ordering_table, prefetch_fire_ordering_table,
+        guest_overlay_ordering_table,
         fire_ordering_table, optic_history, actor_shadow_cache,
         dynamic_light_scratch, world_lighting_cache, local_scene_lighting_cache,
-        world_chunk_appearance, weapon_effects_scratch, hmd_pose_scratch,
-        primitives, log_next_frame);
+        weapon_effects_scratch, hmd_pose_scratch, primitives,
+        render_retail_scrim, log_next_frame);
     if (effect_updates != 0U) {
       fire_animation.update();
       glass_shatter.advance(effect_updates);
       ++actor_tick;
     }
-    // Draw an active SCRIM first without reading or writing depth; the opaque
-    // world then starts against pristine frame depth and overwrites the sky
-    // wherever real scene geometry exists.
+    if (native_skybox_active) {
+      // DrawOTag opens the PsyCross frame and clears its background colour.
+      // Open it first so the lazy clear cannot erase the native panorama.
+      static_cast<void>(PsyX_BeginScene());
+
+      const auto horizon =
+          presentation.environment.fogEnabled()
+              ? presentation.environment.fog_color
+              : presentation.environment.clear_color;
+      mission_skybox.draw(camera, horizon.red, horizon.green, horizon.blue);
+    }
+    // A loaded native dome replaces the authored flat SCRIM where configured.
+    // If its replacement asset fails, the retail backdrop remains the fallback.
     GR_SetBlendMode(BM_NONE);
-    if (presentation.scrim.visible) {
+    if (render_retail_scrim) {
       GR_EnableDepth(0);
       GR_SetDepthState(0, 0);
       DrawOTag(reinterpret_cast<u_long *>(&scrim_ordering_table.back()));
     }
     GR_EnableDepth(1);
     GR_SetDepthState(1, 1);
-    GR_EnableSceneFog(1);
-    // Build the lookahead against its own temporary depth image. The active
-    // world is drawn after a clear, so it owns final colour/depth while the
-    // prefetched chunk still self-occludes instead of exposing interiors.
-    GR_ClearDepthBuffer();
-    DrawOTag(reinterpret_cast<u_long *>(&prefetch_ordering_table.back()));
-    GR_EnableSceneFog(0);
-    GR_SetBlendMode(BM_ADD);
-    GR_SetDepthState(1, 0);
-    GR_SetPolygonOffset(0.0F, -1.0F);
-    DrawOTag(reinterpret_cast<u_long *>(&prefetch_fire_ordering_table.back()));
-    GR_SetPolygonOffset(0.0F, 0.0F);
+    DrawOTag(reinterpret_cast<u_long *>(&ordering_table.back()));
     GR_SetDepthState(1, 1);
     GR_SetBlendMode(BM_NONE);
-    GR_EnableSceneFog(1);
-    GR_ClearDepthBuffer();
-    GR_SetDepthState(1, 1);
-    DrawOTag(reinterpret_cast<u_long *>(&ordering_table.back()));
-    GR_EnableSceneFog(0);
     // Retail SVD replays three opaque projected packet snapshots at -8 depth
     // steps. They read world depth without writing it; the live lime subject
     // then owns depth and cleanly covers the overlapping newest echo.
@@ -675,6 +657,18 @@ SceneViewerResult PsyCrossSceneViewer::run(
       GR_SetDepthState(1, 1);
       GR_SetBlendMode(BM_NONE);
     }
+    // Object-local shadow maps read the final opaque depth, after the SVD and
+    // actor silhouettes have retained MSAA coverage. Resolving here switches
+    // only the following alpha/effect passes to the single-sample target.
+    if (!primitives.object_shadow_vertices.empty() &&
+        !primitives.object_shadow_casters.empty()) {
+      GR_DrawObjectShadows(
+          primitives.object_shadow_vertices.data(),
+          static_cast<int>(primitives.object_shadow_vertices.size()),
+          primitives.object_shadow_casters.data(),
+          static_cast<int>(primitives.object_shadow_casters.size()),
+          presentation.camera.projection, screen_width, screen_height);
+    }
     // Opaque geometry owns PGXP-Z. Fire blends additively against that
     // depth without writing it, so walls occlude particles and lightbars.
     GR_SetBlendMode(BM_ADD);
@@ -685,6 +679,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_SetPolygonOffset(0.0F, 0.0F);
     GR_SetDepthState(1, 1);
     GR_SetBlendMode(BM_NONE);
+    GR_DrawVolumetricEffects(
+        primitives.volumetric_effects.data(),
+        static_cast<int>(primitives.volumetric_effects.size()),
+        presentation.camera.projection, screen_width, screen_height,
+        static_cast<float>(volumetric_effect_time_seconds));
     drawVirusScannerFilter(presentation.first_person_aim &&
                            presentation.optic_mode == 4U);
     // Static EMD/GMD scanner material stays in the ordinary depth-sorted OT.
@@ -754,30 +753,156 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto retail_bars = game::legacyRetailViewportBars(
         presentation.presentation_viewport_y,
         presentation.presentation_viewport_height);
+    const auto sniper_scope_letterbox =
+        retailSniperScopeLetterboxActive(presented_first_person_aim,
+                                         presentation.optic_mode);
+    const auto gameplay_hud_visibility =
+        retailRifleScopeGameplayHudVisibility(
+            presented_first_person_aim, presentation.interface_mode,
+            presentation.optic_mode, hud_visibility);
     constexpr double retail_screen_height = 240.0;
-    const auto top_bar_height =
+    const auto authored_top_bar_height =
         retail_ui_available
             ? static_cast<int>(std::lround(retail_bars.top * screen_height /
                                            retail_screen_height))
             : (gameplay.letterboxActive() ? 40 : 0);
-    const auto bottom_bar_height =
+    const auto authored_bottom_bar_height =
         retail_ui_available
             ? static_cast<int>(std::lround(retail_bars.bottom * screen_height /
                                            retail_screen_height))
-            : top_bar_height;
+            : authored_top_bar_height;
+    const auto sniper_scope_bar_height =
+        sniper_scope_letterbox
+            ? static_cast<int>(std::lround(retail_sniper_scope_bar_height *
+                                           screen_height / retail_screen_height))
+            : 0;
+    const auto top_bar_height =
+        std::max(authored_top_bar_height, sniper_scope_bar_height);
+    const auto bottom_bar_height =
+        std::max(authored_bottom_bar_height, sniper_scope_bar_height);
     constexpr double hidden_hud_threshold = 0.001;
     const auto hud_fully_hidden = hud_visibility <= hidden_hud_threshold;
     const auto gameplay_hud_active = game::legacyGameplayHudPresentationActive(
         gameplay.missionComplete(), hud_fully_hidden, gameplay.missionFailed());
-    if (gameplay_hud_active ||
-        (!gameplay.missionComplete() && presented_first_person_aim)) {
+    const auto target_lock_overlay_active = gameplay.targetLocked();
+    const auto legacy_frame = gameplay.legacyPresentationFrame();
+    const auto raw_target_lock_active =
+        legacy_frame && legacy_frame->renderer &&
+        legacy_frame->renderer->state.target_lock_active;
+    const auto ui_target_lock_active =
+        legacy_frame && legacy_frame->ui && legacy_frame->ui->target.active;
+    const auto target_lock_input_held = gameplay.targetLockInputHeld();
+    const auto *retail_target_ui =
+        legacy_frame && legacy_frame->ui ? &legacy_frame->ui->target : nullptr;
+    const auto retail_player_slot = retail_target_ui != nullptr
+                                        ? retail_target_ui->guest_slot
+                                        : std::int16_t{-1};
+    const auto retail_target_slot = retail_target_ui != nullptr
+                                        ? retail_target_ui->target_slot
+                                        : std::int16_t{-1};
+    const auto *retail_renderer = legacy_frame && legacy_frame->renderer
+                                      ? &legacy_frame->renderer->state
+                                      : nullptr;
+    const auto *retail_player =
+        retail_renderer != nullptr && retail_player_slot >= 0 &&
+                static_cast<std::size_t>(retail_player_slot) <
+                    retail_renderer->objects.size()
+            ? &retail_renderer
+                   ->objects[static_cast<std::size_t>(retail_player_slot)]
+            : nullptr;
+    const auto pad_target_lock_held =
+        retail_renderer != nullptr &&
+        (retail_renderer->pad.buttons & 0x0008U) != 0U;
+    const auto player_target_controller_ready =
+        retail_player != nullptr && retail_player->target_controller != 0U;
+    const auto player_has_target =
+        retail_player != nullptr && retail_player->has_target;
+    const auto retail_target_health =
+        retail_renderer != nullptr && retail_target_slot >= 0 &&
+                static_cast<std::size_t>(retail_target_slot) <
+                    retail_renderer->objects.size()
+            ? retail_renderer
+                  ->objects[static_cast<std::size_t>(retail_target_slot)]
+                  .health
+            : std::int16_t{};
+    const auto target_slot = gameplay.targetLockGuestSlot().value_or(-1);
+    const auto mapped_target = gameplay.aimTarget().has_value();
+    const auto anchor_available = target_anchor.has_value();
+    static auto target_lock_diag_initialized = false;
+    static auto previous_raw_target_lock_active = false;
+    static auto previous_ui_target_lock_active = false;
+    static auto previous_target_lock_overlay_active = false;
+    static auto previous_target_lock_input_held = false;
+    static auto previous_pad_target_lock_held = false;
+    static auto previous_retail_target_slot = std::int16_t{-1};
+    static auto previous_player_target_controller_ready = false;
+    static auto previous_player_has_target = false;
+    static auto previous_retail_target_health = std::int16_t{};
+    static auto previous_target_slot = std::int16_t{-1};
+    static auto previous_mapped_target = false;
+    static auto previous_anchor_available = false;
+    const auto target_lock_diag_changed =
+        !target_lock_diag_initialized ||
+        raw_target_lock_active != previous_raw_target_lock_active ||
+        ui_target_lock_active != previous_ui_target_lock_active ||
+        target_lock_overlay_active != previous_target_lock_overlay_active ||
+        target_lock_input_held != previous_target_lock_input_held ||
+        pad_target_lock_held != previous_pad_target_lock_held ||
+        retail_target_slot != previous_retail_target_slot ||
+        player_target_controller_ready !=
+            previous_player_target_controller_ready ||
+        player_has_target != previous_player_has_target ||
+        retail_target_health != previous_retail_target_health ||
+        target_slot != previous_target_slot ||
+        mapped_target != previous_mapped_target ||
+        anchor_available != previous_anchor_available;
+    if (target_lock_diag_changed &&
+        (raw_target_lock_active || ui_target_lock_active ||
+         target_lock_overlay_active || target_lock_input_held ||
+         pad_target_lock_held || previous_raw_target_lock_active ||
+         previous_ui_target_lock_active ||
+         previous_target_lock_overlay_active ||
+         previous_target_lock_input_held || previous_pad_target_lock_held)) {
+      PsyX_Log_Info(
+          "[TargetLockDiag] input=%d pad=%d raw=%d ui=%d overlay=%d "
+          "controller=%d has_target=%d retail_slot=%d health=%d slot=%d "
+          "mapped=%d anchor=%d hud=%.3f\n",
+          target_lock_input_held ? 1 : 0, pad_target_lock_held ? 1 : 0,
+          raw_target_lock_active ? 1 : 0, ui_target_lock_active ? 1 : 0,
+          target_lock_overlay_active ? 1 : 0,
+          player_target_controller_ready ? 1 : 0, player_has_target ? 1 : 0,
+          static_cast<int>(retail_target_slot),
+          static_cast<int>(retail_target_health), static_cast<int>(target_slot),
+          mapped_target ? 1 : 0, anchor_available ? 1 : 0, hud_visibility);
+    }
+    target_lock_diag_initialized = true;
+    previous_raw_target_lock_active = raw_target_lock_active;
+    previous_ui_target_lock_active = ui_target_lock_active;
+    previous_target_lock_overlay_active = target_lock_overlay_active;
+    previous_target_lock_input_held = target_lock_input_held;
+    previous_pad_target_lock_held = pad_target_lock_held;
+    previous_retail_target_slot = retail_target_slot;
+    previous_player_target_controller_ready = player_target_controller_ready;
+    previous_player_has_target = player_has_target;
+    previous_retail_target_health = retail_target_health;
+    previous_target_slot = target_slot;
+    previous_mapped_target = mapped_target;
+    previous_anchor_available = anchor_available;
+    const auto gameplay_ui_submission =
+        game::classifyLegacyGameplayUiSubmission(
+            gameplay_hud_active,
+            !gameplay.missionComplete() && presented_first_person_aim,
+            target_lock_overlay_active,
+            !gameplay.legacyUiMessages().empty());
+    if (gameplay_ui_submission.gameplay_hud) {
       drawGameplayHud(
           hud_textures, gameplay, camera, target_anchor, world_callout_scratch,
-          active_prompt_bindings, presented_first_person_aim, aim_heading,
+          presented_first_person_aim, aim_heading,
           presented_weapon_switch_frames, presentation_delta_seconds,
           pause_settings.screen_center_x, pause_settings.screen_center_y,
-          hud_visibility, normal_hud_phase, difficulty_, gameplay_hud_scratch);
-      if (hud_visibility > 0.5) {
+          gameplay_hud_visibility, normal_hud_phase, difficulty_,
+          gameplay_hud_scratch);
+      if (gameplay_hud_visibility > 0.5) {
         drawRetailGrenadeTrajectory(presentation,
                                     pause_settings.screen_center_x,
                                     pause_settings.screen_center_y);
@@ -809,6 +934,28 @@ SceneViewerResult PsyCrossSceneViewer::run(
       const auto bar_right = static_cast<int>(
           std::ceil((static_cast<double>(screen_width) + visible_width) * 0.5));
       const auto bar_width = std::max(bar_right - bar_left, screen_width);
+      if (sniper_scope_letterbox) {
+        // Preserve the complete retail 320x160 aperture. In adaptive Hor+
+        // presentation the logical canvas is wider, so compensate for the
+        // final horizontal scale before masking its left and right edges.
+        const auto aperture_width =
+            static_cast<double>(retail_sniper_scope_aperture_width) /
+            horizontal_scale;
+        const auto aperture_left = static_cast<int>(std::floor(
+            (static_cast<double>(screen_width) - aperture_width) * 0.5));
+        const auto aperture_right = static_cast<int>(std::ceil(
+            (static_cast<double>(screen_width) + aperture_width) * 0.5));
+        const auto left_bar_width = std::max(aperture_left - bar_left, 0);
+        const auto right_bar_width = std::max(bar_right - aperture_right, 0);
+        if (left_bar_width > 0) {
+          drawSolidRect(bar_left, 0, left_bar_width, screen_height, 0U, 0U,
+                        0U);
+        }
+        if (right_bar_width > 0) {
+          drawSolidRect(aperture_right, 0, right_bar_width, screen_height, 0U,
+                        0U, 0U);
+        }
+      }
       if (top_bar_height > 0) {
         drawSolidRect(bar_left, 0, bar_width, top_bar_height, 0U, 0U, 0U);
       }
@@ -820,13 +967,22 @@ SceneViewerResult PsyCrossSceneViewer::run(
       GR_EnableDepth(1);
       GR_SetDepthState(1, 1);
     }
+    if (gameplay_ui_submission.information) {
+      // FONT/TEXT has its own guest type-on/fade lifetime. Composite it after
+      // the viewport bars so a failure/death message cannot be suppressed or
+      // inherit either the normal-HUD phase or letterbox animation.
+      drawGameplayInformationLayer(
+          hud_textures, gameplay, active_prompt_bindings,
+          presented_first_person_aim, pause_settings.screen_center_x,
+          pause_settings.screen_center_y, difficulty_, gameplay_hud_scratch);
+    }
     // Failure presentation belongs to retail FONT/TEXT and fade state.  The
     // guest publishes the same type-on glyph packets for player death and
     // scripted contract violations, then starts its authored 0xc8-tick fade.
     // A native full-screen black overlay used to cover those packets as soon
     // as the failure latch rose, turning objective/parameter failures into an
     // abrupt black frame.  Keep only the native success handoff overlay; the
-    // common failure path has already been drawn by drawGameplayHud above.
+    // common failure path has already been drawn by the information layer.
     if (gameplay.missionComplete()) {
       drawMissionCompleteOverlay(hud_textures);
     }
@@ -979,6 +1135,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto elapsed_seconds =
         std::clamp(raw_elapsed_seconds, 0.0, maximum_frame_time_seconds);
     presentation_delta_seconds = elapsed_seconds;
+    volumetric_effect_time_seconds += elapsed_seconds;
     audio_accumulator_seconds =
         std::min(audio_accumulator_seconds + elapsed_seconds,
                  retail_audio_step_seconds * maximum_audio_backlog_updates);
@@ -1548,7 +1705,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
         clear_latched_gameplay_input();
         log_next_frame = true;
         restore_gameplay_textures(true);
-        prime_checkpoint_world_chunks();
         continue;
       case game::PauseCommandType::restart_mission:
         pause_settings = pause_menu.settings();
@@ -1798,7 +1954,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
       clear_latched_gameplay_input();
       log_next_frame = true;
       restore_gameplay_textures(true);
-      prime_checkpoint_world_chunks();
       PsyX_Log_Info("Failure checkpoint restored; gameplay resumed\n");
       continue;
     }

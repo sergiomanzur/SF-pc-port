@@ -26,30 +26,49 @@ remain unchanged.
 
 ## Launcher options
 
+The launcher uses one window with four tabs. Every launcher label, status and
+validation message is available in English and Russian; changing the language
+updates both the launcher interface and the game's text pack.
+
+### Launch / Запуск
+
+- Select the supported USA v1.1 CUE with **Browse / Обзор**. The selected path
+  is remembered, but the image is never copied.
+- **Text language / Язык текста** selects the English or Russian interface.
+- **Play / Играть** validates the staged settings, saves them to
+  `%LOCALAPPDATA%\SyphonFilterPC\launcher.ini` and starts the game.
+
+### Graphics / Графика
+
 - **Resolution** controls the internal scene and depth buffers as well as output.
 - **Aspect** chooses original 4:3 framing or adaptive Hor+/Vert+ framing.
 - **Fullscreen** starts in borderless desktop fullscreen.
 - **Antialiasing** selects Off, depth-aware SMAA Ultra, or hardware MSAA
   2x/4x/8x. SMAA and MSAA are alternatives and never run together.
 - **Bilinear filtering** smooths textures while clamping each PS1 atlas tile to
-  avoid seams and neighboring-texture bleed.
-- **Mipmapped trilinear** reduces distant texture shimmer with a palette-safe
+  avoid seams and neighbouring-texture bleed.
+- **Trilinear filtering (mipmaps)** reduces distant texture shimmer with a palette-safe
   per-tile mip reconstruction.
-- **Anisotropic filtering** independently improves oblique world textures and
-  uses the trilinear mip reconstruction when both options are enabled.
-- **SMAA Ultra** combines colour and depth edges on the 3D scene before the HUD
-  is drawn, improving silhouettes while keeping text and optics sharp.
+- **Anisotropic filtering** improves oblique world textures and uses the
+  trilinear mip reconstruction when both options are enabled.
+- **Volumetric effects** enables the depth-aware particle volumes used for
+  effects such as fire, explosions, smoke and light halos. It does not replace
+  the game's authored distance fog.
 - **Vertical synchronization** presents on the display refresh and therefore
   caps FPS to the monitor's current refresh rate.
 - **Frame limit** applies a high-resolution cap to every presented frame. Use
   `Unlimited` when VSYNC or variable-refresh hardware should own the cadence.
-- **Text language** selects English or **Русский**. The choice
-  is remembered in `%LOCALAPPDATA%\SyphonFilterPC\launcher.ini`.
-- **Controls** remaps all keyboard and mouse gameplay actions.
-- **DOSSIERS** opens the four-page bonus gallery; use the on-screen buttons,
-  Left/Right, A/D or Escape.
 
-Select **DEPLOY** to save the settings and start the game.
+### Controls / Управление
+
+This tab switches between keyboard/mouse and controller assignments. It also
+selects Automatic, XInput, DirectInput or Raw Input, chooses a stick layout and
+enables or disables vibration. Changes remain staged until **Play**.
+
+### Dossiers / Досье
+
+The four-page bonus gallery is embedded in the launcher. Use its on-screen
+Previous/Next controls or Left/Right and A/D to change page.
 
 Press **F6** during gameplay to show or hide presentation FPS and frame time.
 For a 240 FPS check, disable vertical synchronization, select 240 FPS or

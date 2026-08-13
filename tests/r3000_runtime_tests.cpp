@@ -3645,8 +3645,8 @@ void testLegacyGameplayVmBoundary() {
               bridge_profile.effect_particle_pool + 0x68U + 0x62U, 1U) &&
           vm.runtime().write16(
               bridge_profile.effect_particle_pool + 0x68U + 0x64U, 15U) &&
-          // Controller 2: BRETH00..15 smoke emitted by shocked actors.
-          vm.runtime().write16(effect_controllers + 0x68U + 0x1cU, 3U) &&
+          // Controller 2: free EXPL000..011, never an attached CFIRE sequence.
+          vm.runtime().write16(effect_controllers + 0x68U + 0x1cU, 2U) &&
           vm.runtime().write16(effect_controllers + 0x68U + 0x1eU, 2U) &&
           vm.runtime().write16(effect_controllers + 0x68U + 0x20U, 1U) &&
           vm.runtime().write8(effect_controllers + 0x68U + 0x23U, 48U) &&
@@ -3671,7 +3671,7 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write16(
               bridge_profile.effect_particle_pool + 0xd0U + 0x62U, 3U) &&
           vm.runtime().write16(
-              bridge_profile.effect_particle_pool + 0xd0U + 0x64U, 15U) &&
+              bridge_profile.effect_particle_pool + 0xd0U + 0x64U, 11U) &&
           // Controller 3: VAPOR000..007 environmental plume.
           // A negative-state controller takes its family from particle
           // +0x62, not this deliberately mismatched controller field.
@@ -4219,24 +4219,28 @@ void testLegacyGameplayVmBoundary() {
           bridge->expl_particles[0].family == 2U &&
           bridge->expl_particles[0].scale_byte == 96U &&
           bridge->expl_particles[0].frame == 4U &&
+          bridge->expl_particles[0].attached_explosion_sequence &&
           bridge->expl_particles[1].pool_index == 1 &&
           bridge->expl_particles[1].controller == 1U &&
           bridge->expl_particles[1].source_slot == -1 &&
           bridge->expl_particles[1].family == 1U &&
           bridge->expl_particles[1].scale_byte == 72U &&
           bridge->expl_particles[1].frame == 8U &&
+          !bridge->expl_particles[1].attached_explosion_sequence &&
           bridge->expl_particles[2].pool_index == 2 &&
           bridge->expl_particles[2].controller == 2U &&
           bridge->expl_particles[2].source_slot == 1 &&
-          bridge->expl_particles[2].family == 3U &&
+          bridge->expl_particles[2].family == 2U &&
           bridge->expl_particles[2].scale_byte == 48U &&
-          bridge->expl_particles[2].frame == 8U &&
+          bridge->expl_particles[2].frame == 6U &&
+          !bridge->expl_particles[2].attached_explosion_sequence &&
           bridge->expl_particles[3].pool_index == 3 &&
           bridge->expl_particles[3].controller == 3U &&
           bridge->expl_particles[3].source_slot == -1 &&
           bridge->expl_particles[3].family == 4U &&
           bridge->expl_particles[3].scale_byte == 32U &&
           bridge->expl_particles[3].frame == 4U &&
+          !bridge->expl_particles[3].attached_explosion_sequence &&
           bridge->park2_flamethrower_ribbons.empty(),
       "Legacy typed gameplay bridge mismatch");
 

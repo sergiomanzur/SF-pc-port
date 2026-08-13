@@ -39,6 +39,22 @@ struct GmdTriangle {
     bool degenerate{};
 };
 
+struct GmdPreparedNormal {
+    double x{};
+    double y{};
+    double z{};
+};
+
+inline constexpr double gmd_fallback_normal_crease_cosine = 0.5;
+
+// Builds angle-weighted corner normals only across compatible indexed
+// topology. UV/material boundaries and creases remain split.
+[[nodiscard]] std::vector<std::array<GmdPreparedNormal, 3>>
+prepareGmdFallbackNormals(
+    std::span<const GmdVertex> vertices,
+    std::span<const GmdTriangle> triangles,
+    double crease_cosine = gmd_fallback_normal_crease_cosine);
+
 class GmdModel final {
 public:
     [[nodiscard]] static GmdModel parse(std::span<const std::byte> bytes);
@@ -46,6 +62,13 @@ public:
     [[nodiscard]] const std::vector<GmdVertex>& vertices() const noexcept { return vertices_; }
     [[nodiscard]] const std::vector<GmdNormal>& normals() const noexcept { return normals_; }
     [[nodiscard]] const std::vector<GmdTriangle>& triangles() const noexcept { return triangles_; }
+    [[nodiscard]] const std::vector<std::array<GmdPreparedNormal, 3>>&
+    generatedCornerNormals() const noexcept {
+        return generated_corner_normals_;
+    }
+    [[nodiscard]] bool usesGeneratedCornerNormals() const noexcept {
+        return !generated_corner_normals_.empty();
+    }
     [[nodiscard]] const EmdBounds& bounds() const noexcept { return bounds_; }
     [[nodiscard]] std::uint32_t texturePageMask() const noexcept { return texture_page_mask_; }
     // A zero compact material byte is collision-only retail geometry. Keep
@@ -72,6 +95,7 @@ private:
     std::vector<GmdVertex> vertices_;
     std::vector<GmdNormal> normals_;
     std::vector<GmdTriangle> triangles_;
+    std::vector<std::array<GmdPreparedNormal, 3>> generated_corner_normals_;
     EmdBounds bounds_;
     std::uint32_t texture_page_mask_{};
     std::uint32_t renderable_texture_page_mask_{};

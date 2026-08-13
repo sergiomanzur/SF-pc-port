@@ -1543,6 +1543,139 @@ void renderGlassShards(std::span<const GlassShardPresentationState> shards,
   }
 }
 
+struct GmdVolumetricHalo {
+  Vector3 center;
+  Vector3 radius;
+};
+
+std::optional<GmdVolumetricHalo> gmdVolumetricHalo(
+    const assets::GmdModel &model, const game::SceneObject &object,
+    game::ObjectVisualEffect visual_effect,
+    const game::CameraState &camera) {
+  const auto billboard =
+      visual_effect == game::ObjectVisualEffect::billboard_glow;
+  const auto fixture =
+      visual_effect == game::ObjectVisualEffect::lamp_fixture;
+  if (!billboard && !fixture) {
+    return std::nullopt;
+  }
+
+  auto points = std::vector<Vector3>{};
+  points.reserve(model.triangles().size() * 3U);
+  for (const auto &triangle : model.triangles()) {
+    if (triangle.flags == 0U || triangle.degenerate ||
+        (fixture && !triangle.semi_transparent)) {
+      continue;
+    }
+    for (const auto index : triangle.vertex_indices) {
+      if (index >= model.vertices().size()) {
+        continue;
+      }
+      const auto &vertex = model.vertices()[index];
+      if (billboard) {
+        const auto transformed = transformCylindricalBillboardVertex(
+            model, vertex, object.transform, camera);
+        points.push_back(Vector3{static_cast<double>(transformed.vx),
+                                 static_cast<double>(transformed.vy),
+                                 static_cast<double>(transformed.vz)});
+      } else {
+        points.push_back(transformPoint(vertex.x, vertex.y, vertex.z,
+                                        object.transform));
+      }
+    }
+  }
+  if (points.empty()) {
+    return std::nullopt;
+  }
+
+  auto minimum = points.front();
+  auto maximum = points.front();
+  for (const auto &point : points) {
+    minimum.x = std::min(minimum.x, point.x);
+    minimum.y = std::min(minimum.y, point.y);
+    minimum.z = std::min(minimum.z, point.z);
+    maximum.x = std::max(maximum.x, point.x);
+    maximum.y = std::max(maximum.y, point.y);
+    maximum.z = std::max(maximum.z, point.z);
+  }
+  const auto center = Vector3{(minimum.x + maximum.x) * 0.5,
+                              (minimum.y + maximum.y) * 0.5,
+                              (minimum.z + maximum.z) * 0.5};
+  const auto basis = viewBasis(camera);
+  auto radius = Vector3{};
+  for (const auto &point : points) {
+    const auto delta = Vector3{point.x - center.x, point.y - center.y,
+                               point.z - center.z};
+    const auto component = [&](const Vector3 &axis) {
+      return std::abs(delta.x * axis.x + delta.y * axis.y +
+                      delta.z * axis.z);
+    };
+    radius.x = std::max(radius.x, component(basis[0]));
+    radius.y = std::max(radius.y, component(basis[1]));
+    radius.z = std::max(radius.z, component(basis[2]));
+  }
+  const auto maximum_radius = std::max({radius.x, radius.y, radius.z});
+  const auto minimum_radius = std::max(maximum_radius * 0.30, 8.0);
+  radius.x = std::max(radius.x, minimum_radius);
+  radius.y = std::max(radius.y, minimum_radius);
+  radius.z = std::max(radius.z, minimum_radius);
+  return GmdVolumetricHalo{center, radius};
+}
+
+std::optional<GmdVolumetricHalo> gmdDedicatedVolumetricEffect(
+    const assets::GmdModel &model, const game::SceneObject &object,
+    game::ObjectVisualEffect visual_effect) {
+  if (visual_effect != game::ObjectVisualEffect::fire_volume &&
+      visual_effect != game::ObjectVisualEffect::smoke_volume &&
+      visual_effect != game::ObjectVisualEffect::fog_volume) {
+    return std::nullopt;
+  }
+  auto points = std::vector<Vector3>{};
+  points.reserve(model.triangles().size() * 3U);
+  for (const auto &triangle : model.triangles()) {
+    if (triangle.flags == 0U || triangle.degenerate) {
+      continue;
+    }
+    for (const auto index : triangle.vertex_indices) {
+      if (index >= model.vertices().size()) {
+        continue;
+      }
+      const auto &vertex = model.vertices()[index];
+      points.push_back(transformPoint(vertex.x, vertex.y, vertex.z,
+                                      object.transform));
+    }
+  }
+  if (points.empty()) {
+    return std::nullopt;
+  }
+  auto minimum = points.front();
+  auto maximum = points.front();
+  for (const auto &point : points) {
+    minimum.x = std::min(minimum.x, point.x);
+    minimum.y = std::min(minimum.y, point.y);
+    minimum.z = std::min(minimum.z, point.z);
+    maximum.x = std::max(maximum.x, point.x);
+    maximum.y = std::max(maximum.y, point.y);
+    maximum.z = std::max(maximum.z, point.z);
+  }
+  const auto center = Vector3{(minimum.x + maximum.x) * 0.5,
+                              (minimum.y + maximum.y) * 0.5,
+                              (minimum.z + maximum.z) * 0.5};
+  auto radius = Vector3{};
+  for (const auto &point : points) {
+    const auto delta = Vector3{point.x - center.x, point.y - center.y,
+                               point.z - center.z};
+    radius.x = std::max(radius.x, std::abs(delta.x));
+    radius.y = std::max(radius.y, std::abs(delta.y));
+    radius.z = std::max(radius.z, std::abs(delta.z));
+  }
+  radius.x = std::max(radius.x, 8.0);
+  radius.y = std::max(radius.y, 8.0);
+  radius.z = std::max(radius.z,
+                      std::max(radius.x, radius.y) * 0.40);
+  return GmdVolumetricHalo{center, radius};
+}
+
 void renderGmdObject(const assets::GmdModel &model,
                      const game::SceneObject &object,
                      game::ObjectVisualEffect visual_effect,
@@ -1554,13 +1687,76 @@ void renderGmdObject(const assets::GmdModel &model,
                      bool force_semi_transparent = false,
                      long depth_cue_floor = 0L) {
   const auto reverse_winding = reversesWinding(object.transform);
+  const auto halo = gmdVolumetricHalo(model, object, visual_effect, camera);
+  const auto dedicated_volume =
+      gmdDedicatedVolumetricEffect(model, object, visual_effect);
+  const auto halo_seed =
+      static_cast<std::uint32_t>(object.source_index) * 2654435761U ^
+      object.class_id ^ (static_cast<std::uint32_t>(object.model) << 16U);
+  auto volume_halo_added = false;
+  if (halo) {
+    // HMD back-colour can already contain the retail far colour. It is not a
+    // texture palette and must never become the hue of an additive corona.
+    const auto halo_presentation = game::legacyHaloPresentationDescriptor(
+        {128U, 128U, 128U});
+    const auto halo_extent = std::max(halo->radius.x, halo->radius.y) *
+                             halo_presentation.radius_scale;
+    const auto halo_radius =
+        Vector3{halo->radius.x * halo_presentation.radius_scale,
+                halo->radius.y * halo_presentation.radius_scale,
+                std::max(halo_extent * volumetric_halo_depth_scale,
+                         volumetric_halo_minimum_depth)};
+    volume_halo_added = enqueueVolumetricEffect(
+        halo->center, halo_radius, GR_VOLUME_LIGHT_HALO,
+        halo_presentation.red, halo_presentation.green,
+        halo_presentation.blue, halo_presentation.density,
+        halo_presentation.emission, 0.0, halo_seed, camera,
+        primitives.volumetric_effects, 1.0);
+  }
+  auto dedicated_volume_added = false;
+  if (dedicated_volume) {
+    const auto fire = visual_effect == game::ObjectVisualEffect::fire_volume;
+    auto volume_center = dedicated_volume->center;
+    auto volume_radius = dedicated_volume->radius;
+    if (fire) {
+      const auto layout = sf::platform::persistentFireVolumeLayout(
+          volume_center.x, volume_center.y + volume_radius.y, volume_center.z,
+          volume_radius.x, volume_radius.y, volume_radius.z);
+      volume_center =
+          Vector3{layout.center_x, layout.center_y, layout.center_z};
+      volume_radius =
+          Vector3{layout.radius_x, layout.radius_y, layout.radius_z};
+    }
+    const auto fog = visual_effect == game::ObjectVisualEffect::fog_volume;
+    const auto kind = fire ? GR_VOLUME_FIRE
+                           : fog ? GR_VOLUME_FOG : GR_VOLUME_SMOKE;
+    const auto red = fire ? 1.0
+                          : static_cast<double>(back_color.red) / 128.0;
+    const auto green = fire ? 0.42
+                            : static_cast<double>(back_color.green) / 128.0;
+    const auto blue = fire ? 0.08
+                           : static_cast<double>(back_color.blue) / 128.0;
+    const auto density = fire ? 1.30 : fog ? 0.48 : 0.68;
+    const auto emission = fire ? 1.20 : 0.0;
+    const auto vertical_basis = std::array{
+        Vector3{1.0, 0.0, 0.0}, Vector3{0.0, 1.0, 0.0},
+        Vector3{0.0, 0.0, 1.0},
+    };
+    const auto *volume_basis = fog ? nullptr : &vertical_basis;
+    dedicated_volume_added = enqueueVolumetricEffect(
+        volume_center, volume_radius, kind, red, green, blue, density,
+        emission, 0.0, halo_seed, camera,
+        primitives.volumetric_effects, 1.0, volume_basis,
+        fire ? GR_VOLUME_FLAG_PERSISTENT_FIRE
+             : GR_VOLUME_FLAG_NONE);
+  }
+
   std::array<Vector3, 256U> world_normals{};
   if (visual_effect != game::ObjectVisualEffect::billboard_glow) {
     for (std::size_t index = 0U; index < model.normals().size(); ++index) {
       const auto &source = model.normals()[index];
       world_normals[index] = normalizedHmdNormal(rotateMissionVector(
-          Vector3{static_cast<double>(source.x),
-                  static_cast<double>(source.y),
+          Vector3{static_cast<double>(source.x), static_cast<double>(source.y),
                   static_cast<double>(source.z)},
           object.transform));
     }
@@ -1571,6 +1767,17 @@ void renderGmdObject(const assets::GmdModel &model,
     if (triangle.flags == 0 || triangle.degenerate) {
       continue;
     }
+    const auto halo_triangle =
+        visual_effect == game::ObjectVisualEffect::billboard_glow ||
+        (visual_effect == game::ObjectVisualEffect::lamp_fixture &&
+         triangle.semi_transparent);
+    if (volume_halo_added && halo_triangle) {
+      // The volumetric pass owns both the soft body and its compact hot core.
+      continue;
+    }
+    if (dedicated_volume_added) {
+      continue;
+    }
     // Lamp fixtures combine an ordinarily lit opaque housing with a
     // semi-transparent emissive halo. Only the halo bypasses scene lighting
     // and depth cue; treating the complete model as fullbright washes out the
@@ -1578,6 +1785,7 @@ void renderGmdObject(const assets::GmdModel &model,
     const auto apply_scene_lighting =
         game::objectVisualEffectReceivesSceneLighting(
             visual_effect, triangle.semi_transparent);
+    auto triangle_back_color = back_color;
     const auto apply_depth_cue = game::objectVisualEffectReceivesDepthCue(
         visual_effect, triangle.semi_transparent);
     const auto transform_vertex = [&](std::uint8_t index) {
@@ -1592,6 +1800,22 @@ void renderGmdObject(const assets::GmdModel &model,
     auto v2 = transform_vertex(triangle.vertex_indices[2]);
     const std::array positions{v0, v1, v2};
     const auto face_normal = visibleSurfaceNormal(positions);
+    if (halo_triangle) {
+      const auto mean_depth =
+          (cameraDepth(view, v0) + cameraDepth(view, v1) +
+           cameraDepth(view, v2)) /
+          3.0;
+      const auto visibility = game::legacyHaloFogVisibility(
+          static_cast<std::int32_t>(retailObjectDepthCue(mean_depth)));
+      const auto attenuate = [visibility](std::uint8_t channel) {
+        return static_cast<std::uint8_t>(std::clamp(
+            std::lround(static_cast<double>(channel) * visibility), 0L,
+            255L));
+      };
+      triangle_back_color = {attenuate(triangle_back_color.red),
+                             attenuate(triangle_back_color.green),
+                             attenuate(triangle_back_color.blue)};
+    }
     const auto corner_normal = [&](std::size_t corner) {
       const auto normal_index = triangle.normal_indices[corner];
       if (visual_effect != game::ObjectVisualEffect::billboard_glow &&
@@ -1600,6 +1824,26 @@ void renderGmdObject(const assets::GmdModel &model,
         const auto length_squared =
             normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
         if (std::isfinite(length_squared) && length_squared > 0.000001) {
+          return game::DynamicLightPoint{normal.x, normal.y, normal.z};
+        }
+      }
+      if (visual_effect != game::ObjectVisualEffect::billboard_glow &&
+          model.usesGeneratedCornerNormals() &&
+          triangle_index < model.generatedCornerNormals().size()) {
+        const auto &source =
+            model.generatedCornerNormals()[triangle_index][corner];
+        auto normal = normalizedHmdNormal(rotateMissionVector(
+            Vector3{source.x, source.y, source.z}, object.transform));
+        const auto length_squared =
+            normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
+        if (std::isfinite(length_squared) && length_squared > 0.000001) {
+          if (normal.x * face_normal.x + normal.y * face_normal.y +
+                  normal.z * face_normal.z <
+              0.0) {
+            normal.x = -normal.x;
+            normal.y = -normal.y;
+            normal.z = -normal.z;
+          }
           return game::DynamicLightPoint{normal.x, normal.y, normal.z};
         }
       }
@@ -1616,11 +1860,11 @@ void renderGmdObject(const assets::GmdModel &model,
     }
     if (near_status == NearPlaneStatus::intersecting) {
       const std::array textured{
-          makeTexturedVertex(v0, triangle.uv[0], back_color,
+          makeTexturedVertex(v0, triangle.uv[0], triangle_back_color,
                              apply_scene_lighting, normals[0]),
-          makeTexturedVertex(v1, triangle.uv[1], back_color,
+          makeTexturedVertex(v1, triangle.uv[1], triangle_back_color,
                              apply_scene_lighting, normals[1]),
-          makeTexturedVertex(v2, triangle.uv[2], back_color,
+          makeTexturedVertex(v2, triangle.uv[2], triangle_back_color,
                              apply_scene_lighting, normals[2]),
       };
       submitClippedTriangle(
@@ -1674,7 +1918,7 @@ void renderGmdObject(const assets::GmdModel &model,
     }
 
     auto &primitive = primitives.objects.emplace_back();
-    configurePrimitive(primitive, triangle, texture_bank, back_color);
+    configurePrimitive(primitive, triangle, texture_bank, triangle_back_color);
     if (force_semi_transparent) {
       setSemiTrans(&primitive, 1);
     }

@@ -67,11 +67,13 @@ public:
       game::CampaignDifficulty difficulty,
       ControllerButtonBindings controller_bindings = {},
       bool controller_vibration = true,
-      ControllerSettingsCommitCallback controller_settings_commit = {}) noexcept
+      ControllerSettingsCommitCallback controller_settings_commit = {},
+      bool mission_skyboxes = true) noexcept
       : input_(input), cheats_(cheats), difficulty_(difficulty),
         controller_bindings_(controller_bindings),
         controller_vibration_(controller_vibration),
-        controller_settings_commit_(controller_settings_commit) {}
+        controller_settings_commit_(controller_settings_commit),
+        mission_skyboxes_(mission_skyboxes) {}
 
   [[nodiscard]] SceneViewerResult
   run(const game::MissionPackage &mission, PADRAW &pad,
@@ -87,6 +89,7 @@ private:
   ControllerButtonBindings controller_bindings_;
   bool controller_vibration_{true};
   ControllerSettingsCommitCallback controller_settings_commit_;
+  bool mission_skyboxes_{true};
   game::PauseSettings pause_settings_;
   bool pause_settings_initialized_{};
 };

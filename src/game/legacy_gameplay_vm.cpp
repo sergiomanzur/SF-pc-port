@@ -6860,6 +6860,9 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     particle.scale_byte = controller.scale;
     particle.frame = static_cast<std::uint8_t>(
         std::clamp<std::int32_t>(frame, 0, maximum_frame));
+    particle.attached_explosion_sequence =
+        family == explosion_family &&
+        maximum_frame == attached_explosion_maximum_frame;
     for (auto &sprite : state.guest_sprites) {
       if (sprite.effect_particle == static_cast<std::int16_t>(particle_index)) {
         sprite.effect_family = particle.family;

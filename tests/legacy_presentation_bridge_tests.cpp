@@ -1,5 +1,6 @@
-#include "sf/game/legacy_effect_presentation_policy.hpp"
+﻿#include "sf/game/legacy_effect_presentation_policy.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
+#include "sf/platform/persistent_fire_volume.hpp"
 
 #include <array>
 #include <cstdlib>
@@ -14,6 +15,73 @@ void require(bool condition, std::string_view message) {
   if (!condition) {
     throw std::runtime_error{std::string{message}};
   }
+}
+
+void testRetailParticleDisplayInterpolation() {
+  using sf::game::LegacyExplParticlePresentationPosition;
+  using sf::game::LegacyExplParticlePresentationSample;
+  const auto position = [](const auto &sample) {
+    return LegacyExplParticlePresentationPosition{sample.x, sample.y,
+                                                   sample.z};
+  };
+  const auto previous = LegacyExplParticlePresentationSample{
+      .x = 100,
+      .y = -200,
+      .z = 300,
+      .controller = 7U,
+      .source_slot = 11,
+      .family = 2U,
+      .scale_byte = 64U,
+      .frame = 3U,
+      .attached_explosion_sequence = true,
+      .pool_index = 19,
+  };
+  auto current = previous;
+  current.x = 140;
+  current.y = -220;
+  current.z = 360;
+  current.frame = 4U;
+  require(sf::game::interpolateLegacyExplParticlePosition(previous, current,
+                                                           0.5) ==
+              LegacyExplParticlePresentationPosition{120, -210, 330},
+          "Stable retail particle did not interpolate at display rate");
+  require(sf::game::interpolateLegacyExplParticlePosition(previous, current,
+                                                           -1.0) ==
+                  position(previous) &&
+              sf::game::interpolateLegacyExplParticlePosition(
+                  previous, current, 2.0) == position(current),
+          "Retail particle interpolation did not clamp presentation time");
+
+  const auto require_snap = [&](const auto &sample,
+                                std::string_view message) {
+    require(sf::game::interpolateLegacyExplParticlePosition(
+                previous, sample, 0.25) == position(sample),
+            message);
+  };
+  auto discontinuous = current;
+  discontinuous.controller = 8U;
+  require_snap(discontinuous, "Recycled retail controller was interpolated");
+  discontinuous = current;
+  discontinuous.source_slot = 12;
+  require_snap(discontinuous, "Recycled retail source was interpolated");
+  discontinuous = current;
+  discontinuous.family = 1U;
+  require_snap(discontinuous, "Recycled retail family was interpolated");
+  discontinuous = current;
+  discontinuous.scale_byte = 65U;
+  require_snap(discontinuous, "Recycled retail scale was interpolated");
+  discontinuous = current;
+  discontinuous.attached_explosion_sequence = false;
+  require_snap(discontinuous, "Recycled EXPL provenance was interpolated");
+  discontinuous = current;
+  discontinuous.frame = 2U;
+  require_snap(discontinuous, "Restarted retail lifetime was interpolated");
+  discontinuous = current;
+  discontinuous.pool_index = -1;
+  require_snap(discontinuous, "Unidentified retail particle was interpolated");
+  discontinuous = current;
+  discontinuous.x = previous.x + 4096;
+  require_snap(discontinuous, "Teleported retail particle was interpolated");
 }
 
 void testRetailDangerAggregation() {
@@ -1142,24 +1210,16 @@ void testNativeFirstPersonOwnsEveryGuestScreenPrimitive() {
           !sf::game::legacyExplParticleOwnedByGuestSlot(-1, -1),
       "Distant fire ownership accepted an unrelated or unbound guest slot");
   require(
-      sf::game::legacyDistantFireEmitterAllowed(true, true, true, false, false,
-                                                7, false) &&
-          sf::game::legacyDistantFireEmitterAllowed(true, true, true, false,
-                                                    true, 7, false) &&
-          sf::game::legacyDistantFireEmitterAllowed(true, false, false, true,
-                                                    false, 7, false) &&
-          !sf::game::legacyDistantFireEmitterAllowed(false, true, true, false,
-                                                     false, 7, false) &&
-          !sf::game::legacyDistantFireEmitterAllowed(true, false, true, false,
-                                                     false, 7, false) &&
-          !sf::game::legacyDistantFireEmitterAllowed(true, false, false, true,
-                                                     true, 7, false) &&
-          !sf::game::legacyDistantFireEmitterAllowed(true, true, false, false,
-                                                     false, 7, false) &&
-          !sf::game::legacyDistantFireEmitterAllowed(true, true, true, false,
-                                                     false, -1, false) &&
-          !sf::game::legacyDistantFireEmitterAllowed(true, true, true, false,
-                                                     false, 7, true),
+      sf::game::legacyDistantFireEmitterAllowed(true, true, true, 7, false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(false, true, true, 7,
+                                                     false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, false, true, 7,
+                                                     false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, true, false, 7,
+                                                     false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, true, true, -1,
+                                                     false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, true, true, 7, true),
       "Authored CFIRE fallback lost the guest-resident no-EXPL case or escaped "
       "its script activation and retail ownership guards");
 
@@ -1230,10 +1290,196 @@ void testRetailGuestSpriteSortSelection() {
           "GsSPRITE attribute incorrectly selected the renderer fast path");
 }
 
+void testVolumetricPresentationPolicies() {
+  std::array<std::byte, 64U * 256U * 2U> page{};
+  std::array<std::byte, 256U * 2U> clut{};
+  const auto write_word = [](std::span<std::byte> bytes, std::size_t word,
+                             std::uint16_t value) {
+    bytes[word * 2U] = static_cast<std::byte>(value & 0xffU);
+    bytes[word * 2U + 1U] = static_cast<std::byte>(value >> 8U);
+  };
+  // Two indexed-8 texels reference red palette entries; unrelated green in
+  // the same 256-colour row must not tint the sampled lamp.
+  write_word(page, 0U, 0x0201U);
+  write_word(clut, 1U, 0x001fU);
+  write_word(clut, 2U, 0x001fU);
+  write_word(clut, 200U, 0x03e0U);
+  const auto sampled = sf::game::legacyIndexedSpriteClutColor(
+      page, clut, 0U, 1U, 0U, 0U, 2U, 1U);
+  require(sampled && sampled->red == 255U && sampled->green == 0U &&
+              sampled->blue == 0U,
+          "Lamp halo sampled an unrelated colour from its shared CLUT row");
+  require(!sf::game::legacyIndexedSpriteClutColor(
+               page, clut, 250U, 1U, 0U, 0U, 2U, 1U) &&
+              !sf::game::legacyIndexedSpriteClutColor(
+                  page, clut, 0U, 2U, 0U, 0U, 2U, 1U),
+          "Lamp halo CLUT sampler accepted an invalid palette range/mode");
+
+  const auto green = sf::game::legacyHaloPresentationDescriptor(
+      {32U, 224U, 64U}, {128U, 128U, 128U});
+  const auto zero_back = sf::game::legacyHaloPresentationDescriptor(
+      {32U, 224U, 64U}, {0U, 0U, 0U});
+  require(green.green == 1.0 && green.red < green.green &&
+              green.blue < green.green && green.radius_scale > 1.0 &&
+              green.radius_scale < 1.25 && green.emission < 1.0 &&
+              zero_back.green == 1.0 && zero_back.red == green.red,
+          "Authored halo chroma/scale ignored its CLUT or neutral back-colour");
+
+  const auto depth_cued_packet = sf::game::LegacyRgbBridgeState{8U, 24U, 224U};
+  const auto fullbright_back =
+      sf::game::legacyHaloBackColor(depth_cued_packet, true);
+  const auto ordinary_back =
+      sf::game::legacyHaloBackColor(depth_cued_packet, false);
+  const auto warm_fullbright = sf::game::legacyHaloPresentationDescriptor(
+      {232U, 92U, 24U}, fullbright_back);
+  require(fullbright_back == sf::game::LegacyRgbBridgeState{128U, 128U, 128U} &&
+              ordinary_back == depth_cued_packet &&
+              warm_fullbright.red == 1.0 &&
+              warm_fullbright.green > warm_fullbright.blue,
+          "Full-bright halo reused a distance-fogged packet RGB and shifted hue");
+
+  const auto clear_visibility = sf::game::legacyHaloFogVisibility(0);
+  const auto near_visibility = sf::game::legacyHaloFogVisibility(1600);
+  const auto middle_visibility = sf::game::legacyHaloFogVisibility(2800);
+  const auto far_visibility = sf::game::legacyHaloFogVisibility(4096);
+  require(clear_visibility == 1.0 && near_visibility == 1.0 &&
+              middle_visibility > 0.0 && middle_visibility < 1.0 &&
+              far_visibility == 0.0 &&
+              sf::game::legacyHaloFogVisibility(-100) == 1.0 &&
+              sf::game::legacyHaloFogVisibility(5000) == 0.0,
+          "Halo fog attenuation changed nearby lamps or failed to hide a fully fogged lamp");
+
+  require(
+      sf::game::legacyExplParticlePresentsAuthoredFire(
+          sf::game::LegacyEffectSpriteFamily::explosion) &&
+          sf::game::legacyExplParticlePresentsAuthoredFire(
+              sf::game::LegacyEffectSpriteFamily::fire) &&
+          !sf::game::legacyExplParticlePresentsAuthoredFire(
+              sf::game::LegacyEffectSpriteFamily::breath) &&
+          !sf::game::legacyExplParticlePresentsAuthoredFire(
+              sf::game::LegacyEffectSpriteFamily::vapor),
+      "CFIRE ownership ignored retail EXPL or accepted non-fire particles");
+
+  constexpr std::array missions{0U, 1U, 2U, 7U, 15U};
+  for (const auto mission : missions) {
+    require(
+        !sf::game::legacyCfireVolumeMayReplaceRetailSprite(mission, true) &&
+            sf::game::legacyCfireVolumeMayReplaceRetailSprite(mission, false),
+        "An authored CFIRE core was replaced or an unowned effect entered its "
+        "keep-core path");
+    require(
+        sf::game::legacyCfireUsesRetailExplFrameVolume(
+            mission, true, sf::game::LegacyEffectSpriteFamily::explosion) &&
+            sf::game::legacyCfireUsesRetailFireFrameVolume(
+                mission, true, sf::game::LegacyEffectSpriteFamily::fire) &&
+            !sf::game::legacyCfireUsesRetailExplFrameVolume(
+                mission, false,
+                sf::game::LegacyEffectSpriteFamily::explosion) &&
+            !sf::game::legacyCfireUsesRetailExplFrameVolume(
+                mission, true, sf::game::LegacyEffectSpriteFamily::fire) &&
+            !sf::game::legacyCfireUsesRetailExplFrameVolume(
+                mission, true, sf::game::LegacyEffectSpriteFamily::breath) &&
+            sf::game::legacyCfireUsesRetailFireFrameVolume(
+                mission, false, sf::game::LegacyEffectSpriteFamily::fire) &&
+            !sf::game::legacyCfireUsesRetailFireFrameVolume(
+                mission, true,
+                sf::game::LegacyEffectSpriteFamily::explosion) &&
+            !sf::game::legacyCfireUsesRetailFireFrameVolume(
+                mission, true, sf::game::LegacyEffectSpriteFamily::vapor),
+        "Retail-derived EXPL/FIRE volume escaped authored CFIRE ownership or "
+        "ignored its exact guest family");
+  }
+  require(
+      sf::game::legacyUnboundCfireParticleCandidate(
+          sf::game::LegacyEffectSpriteFamily::explosion, 57U, true) &&
+          !sf::game::legacyUnboundCfireParticleCandidate(
+              sf::game::LegacyEffectSpriteFamily::explosion, 56U, true) &&
+          !sf::game::legacyUnboundCfireParticleCandidate(
+              sf::game::LegacyEffectSpriteFamily::explosion, 57U, false) &&
+          !sf::game::legacyUnboundCfireParticleCandidate(
+              sf::game::LegacyEffectSpriteFamily::fire, 57U, true),
+      "Unbound CFIRE candidate accepted free EXPL, wrong scale, or FIRE");
+  require(
+      sf::game::legacyEffectVolumeConsumesRetailSprite(true, true, false) &&
+          !sf::game::legacyEffectVolumeConsumesRetailSprite(true, true, true) &&
+          !sf::game::legacyEffectVolumeConsumesRetailSprite(false, true,
+                                                            false) &&
+          !sf::game::legacyEffectVolumeConsumesRetailSprite(true, false,
+                                                            false),
+      "Frame-derived volume consumed its retail core or replacement policy "
+      "lost a consuming case");
+
+  using sf::platform::PersistentFireEmitterCandidate;
+  using sf::platform::PersistentFireParticlePoint;
+  constexpr std::array controller_group{
+      PersistentFireParticlePoint{-152, -189, -152},
+      PersistentFireParticlePoint{207, 1, 207},
+  };
+  constexpr std::array emitter_candidates{
+      PersistentFireEmitterCandidate{7U, {0, 0, 0}},
+      PersistentFireEmitterCandidate{8U, {322, 0, 0}},
+  };
+  const auto unique_match = sf::platform::uniquePersistentFireEmitterMatch(
+      controller_group, emitter_candidates);
+  require(unique_match && *unique_match == 7U,
+          "Complete CFIRE controller group did not resolve its unique authored "
+          "emitter");
+  constexpr std::array ambiguous_group{
+      PersistentFireParticlePoint{200, 0, 0},
+  };
+  require(sf::platform::persistentFireParticleFitsEmitter(
+              ambiguous_group.front(), emitter_candidates[0]) &&
+              sf::platform::persistentFireParticleFitsEmitter(
+                  ambiguous_group.front(), emitter_candidates[1]) &&
+              !sf::platform::uniquePersistentFireEmitterMatch(
+                  ambiguous_group, emitter_candidates),
+          "Ambiguous one-particle CFIRE overlap did not fail closed");
+  constexpr std::array outside_group{
+      PersistentFireParticlePoint{0, 0, 500},
+  };
+  require(!sf::platform::uniquePersistentFireEmitterMatch(
+              outside_group, emitter_candidates),
+          "Out-of-envelope EXPL particle acquired authored CFIRE ownership");
+
+  const auto cfire_preload = sf::game::legacyCfireSpritePreloadAllowed;
+  require(
+      cfire_preload(0U, true, true, false, false, false, true) &&
+          cfire_preload(1U, true, true, false, false, false, true) &&
+          cfire_preload(15U, true, true, false, true, true, true) &&
+          !cfire_preload(1U, false, true, false, false, false, true) &&
+          !cfire_preload(1U, true, false, false, false, false, true) &&
+          !cfire_preload(1U, true, true, true, false, false, true) &&
+          !cfire_preload(1U, true, true, false, true, false, true) &&
+          !cfire_preload(1U, true, true, false, false, false, false),
+      "CFIRE sprite residency lost global connected-route preloading or "
+      "escaped its fail-closed provenance guards");
+  constexpr auto authored_particle_count = 8U;
+  const auto retained_particle_count =
+      !sf::game::legacyCfireVolumeMayReplaceRetailSprite(1U, true)
+          ? authored_particle_count
+          : 0U;
+  require(retained_particle_count == authored_particle_count,
+          "Global CFIRE policy culled authored particle lifetime");
+  const auto subway = sf::game::legacyCfireVolumeTuning(1U, true);
+  const auto another_mission =
+      sf::game::legacyCfireVolumeTuning(2U, true);
+  const auto unrelated = sf::game::legacyCfireVolumeTuning(1U, false);
+  require(subway.radius_scale == 1.0 && subway.density_scale == 1.0 &&
+              subway.emission_scale == 1.0 &&
+              subway.light_radius_scale == 1.0 &&
+              subway.light_intensity_scale == 1.0 &&
+              another_mission.radius_scale == 1.0 &&
+              another_mission.emission_scale == 1.0 &&
+              unrelated.radius_scale == 1.0 &&
+              unrelated.light_intensity_scale == 1.0,
+          "CFIRE volume or dynamic light retained mission-specific dimming");
+}
+
 } // namespace
 
 int main() {
   try {
+    testRetailParticleDisplayInterpolation();
     testRetailDangerAggregation();
     testDroppedItemPresentationCache();
     testAtomicDeepCopy();
@@ -1243,6 +1489,7 @@ int main() {
     testPersistentWorldVertexColorCache();
     testNativeFirstPersonOwnsEveryGuestScreenPrimitive();
     testRetailGuestSpriteSortSelection();
+    testVolumetricPresentationPolicies();
     std::cout << "legacy presentation bridge tests passed\n";
     return EXIT_SUCCESS;
   } catch (const std::exception &error) {

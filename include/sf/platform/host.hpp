@@ -46,7 +46,8 @@ struct GraphicsSettings {
   bool trilinear_filtering{true};
   bool anisotropic_filtering{true};
   bool smaa{true};
-  bool volumetric_fog{};
+  bool volumetric_effects{};
+  bool mission_skyboxes{true};
   AspectRatioMode aspect_ratio{AspectRatioMode::adaptive};
   bool vsync{true};
   std::uint32_t frame_limit{60U};
