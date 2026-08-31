@@ -25,6 +25,7 @@ enum class ControllerStickLayout : std::uint8_t {
   character_left_camera_right = 0,
   character_right_camera_left = 1,
   original_one_stick = 2,
+  modern_twin_stick = 3,
 };
 
 inline constexpr std::size_t controller_action_count = 9U;

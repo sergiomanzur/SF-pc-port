@@ -61,7 +61,8 @@ std::string_view controllerActionConfigKey(ControllerAction action) noexcept {
 bool isValidControllerStickLayout(ControllerStickLayout layout) noexcept {
   return layout == ControllerStickLayout::character_left_camera_right ||
          layout == ControllerStickLayout::character_right_camera_left ||
-         layout == ControllerStickLayout::original_one_stick;
+         layout == ControllerStickLayout::original_one_stick ||
+         layout == ControllerStickLayout::modern_twin_stick;
 }
 
 ControllerStickLayout cycledControllerStickLayout(ControllerStickLayout layout,
@@ -75,11 +76,13 @@ ControllerStickLayout cycledControllerStickLayout(ControllerStickLayout layout,
   if (direction < 0) {
     switch (layout) {
     case ControllerStickLayout::character_left_camera_right:
-      return ControllerStickLayout::original_one_stick;
+      return ControllerStickLayout::modern_twin_stick;
     case ControllerStickLayout::character_right_camera_left:
       return ControllerStickLayout::character_left_camera_right;
     case ControllerStickLayout::original_one_stick:
       return ControllerStickLayout::character_right_camera_left;
+    case ControllerStickLayout::modern_twin_stick:
+      return ControllerStickLayout::original_one_stick;
     }
   }
   switch (layout) {
@@ -88,6 +91,8 @@ ControllerStickLayout cycledControllerStickLayout(ControllerStickLayout layout,
   case ControllerStickLayout::character_right_camera_left:
     return ControllerStickLayout::original_one_stick;
   case ControllerStickLayout::original_one_stick:
+    return ControllerStickLayout::modern_twin_stick;
+  case ControllerStickLayout::modern_twin_stick:
     return ControllerStickLayout::character_left_camera_right;
   }
   return ControllerStickLayout::character_left_camera_right;
@@ -100,6 +105,8 @@ controllerStickLayoutName(ControllerStickLayout layout) noexcept {
     return "Character Right / Camera Left";
   case ControllerStickLayout::original_one_stick:
     return "Original (One Stick)";
+  case ControllerStickLayout::modern_twin_stick:
+    return "Modern (Twin-Stick Shooter)";
   case ControllerStickLayout::character_left_camera_right:
   default:
     return "Character Left / Camera Right";

@@ -18,8 +18,23 @@ if(SF_BUILD_TESTS)
     sf_add_unit_test(sf_tests tests/test_main.cpp LIBRARIES sf::game)
     sf_add_unit_test(sf_pause_menu_tests tests/pause_menu_tests.cpp
         LIBRARIES sf::game)
-    sf_add_unit_test(sf_controller_bindings_tests
-        tests/controller_bindings_tests.cpp LIBRARIES sf::game)
+    add_executable(sf_controller_bindings_tests
+        tests/controller_bindings_tests.cpp
+        src/game/controller_bindings.cpp)
+    target_include_directories(sf_controller_bindings_tests PRIVATE include)
+    target_compile_features(sf_controller_bindings_tests PRIVATE cxx_std_20)
+    sf_set_project_warnings(sf_controller_bindings_tests)
+    set_target_properties(sf_controller_bindings_tests PROPERTIES FOLDER "Tests")
+    add_test(NAME sf_controller_bindings_tests COMMAND sf_controller_bindings_tests)
+
+    add_executable(sf_weapon_wheel_tests
+        tests/weapon_wheel_tests.cpp
+        src/game/weapon_wheel.cpp)
+    target_include_directories(sf_weapon_wheel_tests PRIVATE include)
+    target_compile_features(sf_weapon_wheel_tests PRIVATE cxx_std_20)
+    sf_set_project_warnings(sf_weapon_wheel_tests)
+    set_target_properties(sf_weapon_wheel_tests PROPERTIES FOLDER "Tests")
+    add_test(NAME sf_weapon_wheel_tests COMMAND sf_weapon_wheel_tests)
     if(WIN32)
         add_executable(sf_launcher_settings_tests
             tests/launcher_settings_tests.cpp

@@ -1,4 +1,4 @@
-﻿<resources>
+<resources>
     <string name="app_name">Syphon Filter</string>
     <string name="launch_game">Запустить игру</string>
     <string name="select_disc">Выбрать образ CUE / BIN</string>
@@ -29,11 +29,15 @@
     <string name="custom_skyboxes">Улучшенные скайбоксы</string>
     <string name="touch_overlay">Экранные сенсорные кнопки</string>
     <string name="touch_opacity">Прозрачность кнопок</string>
-    <string name="touch_haptics">Виброотклик сенсорных кнопок</string>
+    <string name="touch_haptics">Виброотклик сенсора</string>
+    <string name="gyro_aiming">Гироскопическое прицеливание</string>
+    <string name="stick_layout">Схема стиков</string>
+    <string name="twin_stick">Современная (Твин-стик шутер)</string>
+    <string name="weapon_wheel">Колесо выбора оружия</string>
     <string name="controller_vibration">Вибрация геймпада</string>
     <string name="all_weapons">Все оружие и бесконечные патроны</string>
     <string name="one_shot_kills">Убийство с одного выстрела (Супер 9мм)</string>
     <string name="weak_enemies">Слабые враги</string>
-    <string name="movie_theater">Кинотеатр (Просмотр роликов)</string>
+    <string name="movie_theater">Кинотеатр (Просмотр видеороликов)</string>
     <string name="save_settings">Сохранить настройки</string>
 </resources>

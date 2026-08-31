@@ -139,6 +139,7 @@ add_library(sf_game
     src/game/supported_games.cpp
     src/game/system.cpp
     src/game/title.cpp
+    src/game/weapon_wheel.cpp
 )
 add_library(sf::game ALIAS sf_game)
 target_include_directories(sf_game PUBLIC include)
@@ -231,6 +232,7 @@ if(SF_ENABLE_PSYCROSS)
         src/platform/psycross_vram.cpp
         src/platform/psycross_window_mode.cpp
         src/platform/touch_overlay.cpp
+        src/platform/gyro_input.cpp
     )
     add_library(sf::psycross_backend ALIAS sf_psycross_backend)
     target_include_directories(sf_psycross_backend PUBLIC include)

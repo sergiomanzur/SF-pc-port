@@ -1,4 +1,4 @@
-﻿<resources>
+<resources>
     <string name="app_name">Syphon Filter</string>
     <string name="launch_game">Launch Game</string>
     <string name="select_disc">Select CUE / BIN Disc Image</string>
@@ -30,6 +30,10 @@
     <string name="touch_overlay">On-Screen Touch Controls</string>
     <string name="touch_opacity">Touch Controls Opacity</string>
     <string name="touch_haptics">Touch Vibration Feedback</string>
+    <string name="gyro_aiming">Gyroscope Motion Aiming</string>
+    <string name="stick_layout">Stick Control Scheme</string>
+    <string name="twin_stick">Modern (Twin-Stick Shooter)</string>
+    <string name="weapon_wheel">Radial Weapon Selection Wheel</string>
     <string name="controller_vibration">Controller Vibration</string>
     <string name="all_weapons">All Weapons &amp; Infinite Ammo</string>
     <string name="one_shot_kills">One-Shot Kills (Super 9mm)</string>

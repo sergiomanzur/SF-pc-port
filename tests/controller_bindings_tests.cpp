@@ -93,17 +93,21 @@ void testStickLayoutSemantics() {
   constexpr auto standard = ControllerStickLayout::character_left_camera_right;
   constexpr auto swapped = ControllerStickLayout::character_right_camera_left;
   constexpr auto original = ControllerStickLayout::original_one_stick;
+  constexpr auto modern = ControllerStickLayout::modern_twin_stick;
 
   require(
       isValidControllerStickLayout(standard) &&
           isValidControllerStickLayout(swapped) &&
           isValidControllerStickLayout(original) &&
-          !isValidControllerStickLayout(static_cast<ControllerStickLayout>(3U)),
+          isValidControllerStickLayout(modern) &&
+          !isValidControllerStickLayout(static_cast<ControllerStickLayout>(4U)),
       "controller stick layout validation is incorrect");
   require(cycledControllerStickLayout(standard) == swapped &&
               cycledControllerStickLayout(swapped) == original &&
-              cycledControllerStickLayout(original) == standard &&
-              cycledControllerStickLayout(standard, -1) == original &&
+              cycledControllerStickLayout(original) == modern &&
+              cycledControllerStickLayout(modern) == standard &&
+              cycledControllerStickLayout(standard, -1) == modern &&
+              cycledControllerStickLayout(modern, -1) == original &&
               cycledControllerStickLayout(original, -1) == swapped &&
               cycledControllerStickLayout(swapped, -1) == standard,
           "controller stick layout cycle is incorrect");
@@ -111,7 +115,8 @@ void testStickLayoutSemantics() {
                   "Character Left / Camera Right" &&
               controllerStickLayoutName(swapped) ==
                   "Character Right / Camera Left" &&
-              controllerStickLayoutName(original) == "Original (One Stick)",
+              controllerStickLayoutName(original) == "Original (One Stick)" &&
+              controllerStickLayoutName(modern) == "Modern (Twin-Stick Shooter)",
           "controller stick layout name is incorrect");
 }
 
