@@ -145,28 +145,45 @@ target_include_directories(sf_game PUBLIC include)
 target_compile_features(sf_game PUBLIC cxx_std_20)
 target_link_libraries(sf_game PUBLIC sf::assets sf::core sf::disc sf::psx)
 if(MSVC)
-    target_compile_options(sf_game PRIVATE /utf-8)
+    target_compile_options(sf_game PRIVATE /utf-8 /bigobj)
+    set_source_files_properties(src/game/legacy_gameplay_vm.cpp PROPERTIES COMPILE_FLAGS "/Od")
 endif()
 sf_set_project_warnings(sf_game)
 
-add_executable(sf_tool
-    apps/sf_tool/main.cpp
-    apps/sf_tool/ui_export.cpp
-)
-target_link_libraries(sf_tool PRIVATE sf::game)
-sf_set_project_warnings(sf_tool)
+if(NOT ANDROID)
+    add_executable(sf_tool
+        apps/sf_tool/main.cpp
+        apps/sf_tool/ui_export.cpp
+    )
+    target_link_libraries(sf_tool PRIVATE sf::game)
+    sf_set_project_warnings(sf_tool)
 
-include(SfRomProbes)
+    include(SfRomProbes)
+endif()
 
 if(SF_ENABLE_PSYCROSS)
     if(NOT EXISTS "${SF_PSYCROSS_ROOT}/CMakeLists.txt")
         message(FATAL_ERROR "PsyCross was not found at SF_PSYCROSS_ROOT=${SF_PSYCROSS_ROOT}")
     endif()
 
-    find_package(SDL2 CONFIG REQUIRED)
-    find_package(OpenAL CONFIG REQUIRED)
-    find_package(OpenGL REQUIRED)
-    find_package(FFMPEG REQUIRED)
+    if(ANDROID)
+        find_library(GLES3_LIB GLESv3 REQUIRED)
+        find_library(EGL_LIB EGL REQUIRED)
+        find_library(ANDROID_LIB android REQUIRED)
+        find_library(LOG_LIB log REQUIRED)
+        if(NOT TARGET OpenGL::GL)
+            add_library(OpenGL::GL INTERFACE IMPORTED)
+            set_target_properties(OpenGL::GL PROPERTIES INTERFACE_LINK_LIBRARIES "${GLES3_LIB};${EGL_LIB}")
+        endif()
+        find_package(SDL2 REQUIRED)
+        find_package(OpenAL REQUIRED)
+        find_package(FFMPEG REQUIRED)
+    else()
+        find_package(SDL2 CONFIG REQUIRED)
+        find_package(OpenAL CONFIG REQUIRED)
+        find_package(OpenGL REQUIRED)
+        find_package(FFMPEG REQUIRED)
+    endif()
 
     # PsyCross links a plain `OpenAL` item. Make that name a real target so the
     # final executable receives vcpkg's correctly named OpenAL32 import library.
@@ -213,6 +230,7 @@ if(SF_ENABLE_PSYCROSS)
         src/platform/psycross_scene_world.inc
         src/platform/psycross_vram.cpp
         src/platform/psycross_window_mode.cpp
+        src/platform/touch_overlay.cpp
     )
     add_library(sf::psycross_backend ALIAS sf_psycross_backend)
     target_include_directories(sf_psycross_backend PUBLIC include)
@@ -222,18 +240,27 @@ if(SF_ENABLE_PSYCROSS)
         PRIVATE sf::media psycross_static OpenAL::OpenAL OpenGL::GL SDL2::SDL2)
     sf_set_project_warnings(sf_psycross_backend)
 
-    add_executable(syphon_filter
-        apps/syphon_filter/launcher/controls_page.cpp
-        apps/syphon_filter/launcher/controller_capture.cpp
-        apps/syphon_filter/launcher/dossier_page.cpp
-        apps/syphon_filter/launcher/graphics_page.cpp
-        apps/syphon_filter/launcher/launch_page.cpp
-        apps/syphon_filter/launcher/settings.cpp
-        apps/syphon_filter/launcher/shell.cpp
-        apps/syphon_filter/launcher/text.cpp
-        apps/syphon_filter/launcher/theme.cpp
-        apps/syphon_filter/main.cpp
-    )
+    if(ANDROID)
+        add_library(syphon_filter SHARED
+            apps/syphon_filter/launcher/settings.cpp
+            apps/syphon_filter/launcher/shell.cpp
+            apps/syphon_filter/main.cpp
+        )
+        target_link_libraries(syphon_filter PRIVATE sf::psycross_backend SDL2::SDL2 ${ANDROID_LIB} ${LOG_LIB})
+    else()
+        add_executable(syphon_filter
+            apps/syphon_filter/launcher/controls_page.cpp
+            apps/syphon_filter/launcher/controller_capture.cpp
+            apps/syphon_filter/launcher/dossier_page.cpp
+            apps/syphon_filter/launcher/graphics_page.cpp
+            apps/syphon_filter/launcher/launch_page.cpp
+            apps/syphon_filter/launcher/settings.cpp
+            apps/syphon_filter/launcher/shell.cpp
+            apps/syphon_filter/launcher/text.cpp
+            apps/syphon_filter/launcher/theme.cpp
+            apps/syphon_filter/main.cpp
+        )
+    endif()
     if(WIN32)
         set(SF_LAUNCHER_ICON_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/syphon_filter.ico")
         set(SF_LAUNCHER_ICON_SOURCE
@@ -325,9 +352,13 @@ if(SF_ENABLE_PSYCROSS)
     endif()
     sf_set_project_warnings(syphon_filter)
 
-    add_executable(sf_movie_probe apps/sf_movie_probe/main.cpp)
-    target_link_libraries(sf_movie_probe PRIVATE sf::game sf::media)
-    sf_set_project_warnings(sf_movie_probe)
+    if(NOT ANDROID)
+        add_executable(sf_movie_probe apps/sf_movie_probe/main.cpp)
+        target_link_libraries(sf_movie_probe PRIVATE sf::game sf::media)
+        sf_set_project_warnings(sf_movie_probe)
+    endif()
 endif()
 
-include(SfTests)
+if(NOT ANDROID)
+    include(SfTests)
+endif()

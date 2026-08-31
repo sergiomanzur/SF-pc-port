@@ -9,6 +9,7 @@
 #include "psycross_window_mode.hpp"
 
 #include "sf/core/error.hpp"
+#include "sf/platform/touch_overlay.hpp"
 #include "sf/game/campaign.hpp"
 #include "sf/game/game_disc.hpp"
 #include "sf/game/mission.hpp"
@@ -201,8 +202,11 @@ enum class SaveStoreDecision {
 };
 
 std::uint16_t readHostButtons(const PADRAW &pad) noexcept {
-  return static_cast<std::uint16_t>(pad.buttons[0]) |
-         (static_cast<std::uint16_t>(pad.buttons[1]) << 8U);
+  auto buttons = static_cast<std::uint16_t>(pad.buttons[0]) |
+                 (static_cast<std::uint16_t>(pad.buttons[1]) << 8U);
+  const auto touch = globalTouchOverlay().sampleState();
+  buttons &= ~touch.buttons_down;
+  return buttons;
 }
 
 KeyboardMouseActionSnapshot
