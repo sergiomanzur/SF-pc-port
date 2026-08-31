@@ -1,4 +1,4 @@
-﻿plugins {
+plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -39,6 +39,8 @@ android {
             )
         }
     }
+    ndkVersion = "26.2.11394342"
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -48,7 +50,7 @@ android {
     }
     externalNativeBuild {
         cmake {
-            path = file("../../../CMakeLists.txt")
+            path = file("../../CMakeLists.txt")
             version = "3.24.0+"
         }
     }

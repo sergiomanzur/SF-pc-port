@@ -461,8 +461,8 @@ void PsyX_DestroyVolumetrics();
 void PsyX_DestroyObjectShadows();
 }
 
-#if defined(RENDERER_OGL)
-static GLenum g_nativeDepthInternalFormat = GL_DEPTH32F_STENCIL8;
+#if defined(RENDERER_OGL) || defined(RENDERER_OGLES)
+static GLenum g_nativeDepthInternalFormat = GL_DEPTH24_STENCIL8;
 
 static void PsyX_AllocateNativeDepthTexture(GLenum internalFormat, int width,
                                             int height) {
@@ -679,13 +679,9 @@ int GR_InitialiseGLContext(char *windowName, int fullscreen) {
 #if defined(RENDERER_OGLES)
 
 #if defined(__ANDROID__)
-  // Override to full screen.
-  SDL_DisplayMode displayMode;
-  if (SDL_GetCurrentDisplayMode(0, &displayMode) == 0) {
-    screenWidth = displayMode.w;
-    windowWidth = displayMode.w;
-    screenHeight = displayMode.h;
-    windowHeight = displayMode.h;
+  SDL_GL_GetDrawableSize(g_window, &g_windowWidth, &g_windowHeight);
+  if (g_windowWidth < g_windowHeight) {
+    std::swap(g_windowWidth, g_windowHeight);
   }
 #endif
 
@@ -1558,60 +1554,54 @@ int GR_Shader_CheckProgramStatus(GLuint program) {
 
 ShaderID GR_Shader_Compile(const char *source, int isPsxShader) {
 #if defined(ES2_SHADERS)
-  const char *GLSL_HEADER_VERT = R"(
-		#version 100
-		precision lowp  int;
-		precision highp float;
-		#define FLAT
-	)";
+  const char *GLSL_HEADER_VERT =
+      "#version 100\n"
+      "precision lowp  int;\n"
+      "precision highp float;\n"
+      "#define FLAT\n";
 
-  const char *GLSL_HEADER_FRAG = R"(
-		#version 100
-		precision lowp  int;
-		precision highp float;
-		#define FLAT
-		#define fragColor gl_FragColor
-	)";
+  const char *GLSL_HEADER_FRAG =
+      "#version 100\n"
+      "precision lowp  int;\n"
+      "precision highp float;\n"
+      "#define FLAT\n"
+      "#define fragColor gl_FragColor\n";
 #elif defined(ES3_SHADERS)
-  const char *GLSL_HEADER_VERT = R"(
-		#version 300 es
-		precision lowp  int;
-		precision highp float;
-		#define FLAT flat
-		#define varying   out
-		#define attribute in
-		#define texture2D texture
-	)";
+  const char *GLSL_HEADER_VERT =
+      "#version 300 es\n"
+      "precision lowp  int;\n"
+      "precision highp float;\n"
+      "#define FLAT flat\n"
+      "#define varying   out\n"
+      "#define attribute in\n"
+      "#define texture2D texture\n";
 
-  const char *GLSL_HEADER_FRAG = R"(
-		#version 300 es
-		precision lowp  int;
-		precision highp float;
-		#define FLAT flat
-		#define varying     in
-		#define texture2D   texture
-		out vec4 fragColor;
-	)";
+  const char *GLSL_HEADER_FRAG =
+      "#version 300 es\n"
+      "precision lowp  int;\n"
+      "precision highp float;\n"
+      "#define FLAT flat\n"
+      "#define varying     in\n"
+      "#define texture2D   texture\n"
+      "out vec4 fragColor;\n";
 #else
-  const char *GLSL_HEADER_VERT = R"(
-		#version 140
-		precision lowp  int;
-		precision highp float;
-		#define FLAT flat
-		#define varying   out
-		#define attribute in
-		#define texture2D texture
-	)";
+  const char *GLSL_HEADER_VERT =
+      "#version 140\n"
+      "precision lowp  int;\n"
+      "precision highp float;\n"
+      "#define FLAT flat\n"
+      "#define varying   out\n"
+      "#define attribute in\n"
+      "#define texture2D texture\n";
 
-  const char *GLSL_HEADER_FRAG = R"(
-		#version 140
-		precision lowp  int;
-		precision highp float;
-		#define FLAT flat
-		#define varying     in
-		#define texture2D   texture
-		out vec4 fragColor;
-	)";
+  const char *GLSL_HEADER_FRAG =
+      "#version 140\n"
+      "precision lowp  int;\n"
+      "precision highp float;\n"
+      "#define FLAT flat\n"
+      "#define varying     in\n"
+      "#define texture2D   texture\n"
+      "out vec4 fragColor;\n";
 #endif
 
   char extra_vs_defines[1024];

@@ -636,12 +636,12 @@ void PrintMessageToOutput(SpewType_t spewtype, char const* pMsgFormat,
 		EM_ASM({ console.log(UTF8ToString($0)); }, pTempBuffer);
 	}
 #else
-	printf(pTempBuffer);
+	printf("%s", pTempBuffer);
 #endif
 
 	if (g_logStream)
 	{
-		fprintf(g_logStream, pTempBuffer);
+		fprintf(g_logStream, "%s", pTempBuffer);
 		g_logStreamDirty = 1;
 	}
 }
@@ -719,6 +719,9 @@ void PsyX_Initialise(char* appName, int width, int height, int fullscreen)
 
 #if defined(__EMSCRIPTEN__)
 	SDL_SetHint(SDL_HINT_EMSCRIPTEN_ASYNCIFY, "0");
+#endif
+#if defined(__ANDROID__)
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #endif
 
 	if (SDL_Init(SDL_INIT_VIDEO) != 0)
@@ -851,7 +854,7 @@ void PsyX_Sys_DoPollEvent()
 				if (g_altKeyState && event.type == SDL_KEYDOWN)
 				{
 					int fullscreen =
-						SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN > 0;
+						(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) != 0;
 
 					SDL_SetWindowFullscreen(
 						g_window, fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);

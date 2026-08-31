@@ -1,4 +1,4 @@
-﻿# Syphon Filter Android Port
+# Syphon Filter Android Port
 
 This directory contains the Android port for **Syphon Filter PC Recompilation**.
 

@@ -483,10 +483,10 @@ public:
     return file.good();
   }
 
-  int getInt(const std::string &section, const std::string &key, int fallback) const {
-    const auto sec_it = sections.find(section);
+  int getInt(std::string_view section, std::string_view key, int fallback) const {
+    const auto sec_it = sections.find(std::string(section));
     if (sec_it == sections.end()) return fallback;
-    const auto key_it = sec_it->second.find(key);
+    const auto key_it = sec_it->second.find(std::string(key));
     if (key_it == sec_it->second.end()) return fallback;
     try {
       return std::stoi(key_it->second);
@@ -495,20 +495,20 @@ public:
     }
   }
 
-  std::string getString(const std::string &section, const std::string &key, const std::string &fallback) const {
-    const auto sec_it = sections.find(section);
+  std::string getString(std::string_view section, std::string_view key, const std::string &fallback) const {
+    const auto sec_it = sections.find(std::string(section));
     if (sec_it == sections.end()) return fallback;
-    const auto key_it = sec_it->second.find(key);
+    const auto key_it = sec_it->second.find(std::string(key));
     if (key_it == sec_it->second.end()) return fallback;
     return key_it->second;
   }
 
-  void setInt(const std::string &section, const std::string &key, int value) {
-    sections[section][key] = std::to_string(value);
+  void setInt(std::string_view section, std::string_view key, int value) {
+    sections[std::string(section)][std::string(key)] = std::to_string(value);
   }
 
-  void setString(const std::string &section, const std::string &key, const std::string &value) {
-    sections[section][key] = value;
+  void setString(std::string_view section, std::string_view key, const std::string &value) {
+    sections[std::string(section)][std::string(key)] = value;
   }
 };
 

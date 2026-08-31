@@ -125,15 +125,26 @@ void printUsage() {
 
 } // namespace
 
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "SyphonFilter", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "SyphonFilter", __VA_ARGS__)
+extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char **argv) {
+    LOGI("Syphon Filter SDL_main starting, argc=%d", argc);
+    for (int i = 0; i < argc; ++i) {
+        LOGI("argv[%d] = %s", i, argv[i] ? argv[i] : "(null)");
+    }
+#else
 int main(int argc, char **argv) {
+#endif
   try {
     sf::platform::GraphicsSettings graphics;
     sf::game::RetailCheatState retail_cheats;
     auto input = sf::platform::defaultKeyboardMouseBindings();
     auto language = sf::game::GameLanguage::english;
     std::error_code executable_path_error;
-    const auto executable_path = std::filesystem::absolute(
-        std::filesystem::path{argv[0]}, executable_path_error);
+    const auto executable_path = (argc > 0 && argv[0]) ? std::filesystem::absolute(
+        std::filesystem::path{argv[0]}, executable_path_error) : std::filesystem::current_path();
     const auto executable_directory = executable_path_error
                                           ? std::filesystem::current_path()
                                           : executable_path.parent_path();
@@ -263,6 +274,18 @@ int main(int argc, char **argv) {
       }
     }
 
+#if defined(__ANDROID__)
+    if (arguments.empty()) {
+      if (std::filesystem::exists("/sdcard/Download/game.cue")) {
+        arguments.emplace_back("--game");
+        arguments.emplace_back("/sdcard/Download/game.cue");
+      } else if (std::filesystem::exists("/sdcard/Download/Syphon Filter (v1.1).cue")) {
+        arguments.emplace_back("--game");
+        arguments.emplace_back("/sdcard/Download/Syphon Filter (v1.1).cue");
+      }
+    }
+#endif
+
     const auto launch = parseLaunchRequest(arguments);
     if (!launch) {
       printUsage();
@@ -374,10 +397,16 @@ int main(int argc, char **argv) {
     host->run();
     return 0;
   } catch (const sf::core::Error &error) {
+#if defined(__ANDROID__)
+    LOGE("Syphon Filter core::Error: %s", error.what());
+#endif
     std::cerr << "syphon_filter: " << error.what() << '\n';
     sf::platform::showLauncherError("STARTUP FAILED", error.what());
     return 1;
   } catch (const std::exception &error) {
+#if defined(__ANDROID__)
+    LOGE("Syphon Filter std::exception: %s", error.what());
+#endif
     std::cerr << "syphon_filter: unexpected error: " << error.what() << '\n';
     sf::platform::showLauncherError("UNEXPECTED ERROR", error.what());
     return 1;

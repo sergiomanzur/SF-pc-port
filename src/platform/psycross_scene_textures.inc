@@ -1971,7 +1971,7 @@ private:
       }
       has_native_residency = true;
       oldest_baseline =
-          std::min(oldest_baseline, page_upload_write_sequences_[slot]);
+          std::min<std::uint64_t>(oldest_baseline, page_upload_write_sequences_[slot]);
     }
     if (!has_native_residency || oldest_baseline >= current_sequence) {
       return;

@@ -1,4 +1,4 @@
-﻿package com.madxbio97.syphonfilter
+package com.madxbio97.syphonfilter
 
 import android.os.Bundle
 import android.widget.ArrayAdapter

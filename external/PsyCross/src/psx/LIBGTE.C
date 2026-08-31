@@ -25,14 +25,14 @@
 #define MAX(a,b)	fst_max(a,b)
 #endif
 
-inline int fst_min(int a, int b)
+static inline int fst_min(int a, int b)
 {
 	int diff = a - b;
 	int dsgn = diff >> 31;
 	return b + (diff & dsgn);
 }
 
-inline int fst_max(int a, int b)
+static inline int fst_max(int a, int b)
 {
 	int diff = a - b;
 	int dsgn = diff >> 31;
@@ -305,10 +305,10 @@ MATRIX* MulMatrix0(MATRIX* m0, MATRIX* m1, MATRIX* m2)
 	m2->m[2][2] = r2.vz;
 
 #else
-	/* これでもm0==m2の時ヤバイ */
+	/* 縺薙ｌ縺ｧ繧Ｎ0==m2縺ｮ譎ゅΖ繝舌う */
 	int vx, vy, vz;
 	MATRIX tmp;
-	/* のでm0をtmpにコピー */
+	/* 縺ｮ縺ｧm0繧稚mp縺ｫ繧ｳ繝斐�ｼ */
 	if (m0 == m2) {
 		tmp = *m0; m0 = &tmp;
 	}

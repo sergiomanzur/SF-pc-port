@@ -97,13 +97,13 @@ int			g_ALEffectsSupported = 0;
 
 #ifndef __EMSCRIPTEN__
 
-LPALGENEFFECTS alGenEffects = NULL;
-LPALDELETEEFFECTS alDeleteEffects = NULL;
-LPALEFFECTI alEffecti = NULL;
-LPALEFFECTF alEffectf = NULL;
-LPALGENAUXILIARYEFFECTSLOTS alGenAuxiliaryEffectSlots = NULL;
-LPALDELETEAUXILIARYEFFECTSLOTS alDeleteAuxiliaryEffectSlots = NULL;
-LPALAUXILIARYEFFECTSLOTI alAuxiliaryEffectSloti = NULL;
+static LPALGENEFFECTS alGenEffects = NULL;
+static LPALDELETEEFFECTS alDeleteEffects = NULL;
+static LPALEFFECTI alEffecti = NULL;
+static LPALEFFECTF alEffectf = NULL;
+static LPALGENAUXILIARYEFFECTSLOTS alGenAuxiliaryEffectSlots = NULL;
+static LPALDELETEAUXILIARYEFFECTSLOTS alDeleteAuxiliaryEffectSlots = NULL;
+static LPALAUXILIARYEFFECTSLOTI alAuxiliaryEffectSloti = NULL;
 
 #endif // __EMSCRIPTEN__
 

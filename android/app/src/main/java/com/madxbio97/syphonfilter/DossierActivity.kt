@@ -1,4 +1,4 @@
-﻿package com.madxbio97.syphonfilter
+package com.madxbio97.syphonfilter
 
 import android.graphics.BitmapFactory
 import android.os.Bundle

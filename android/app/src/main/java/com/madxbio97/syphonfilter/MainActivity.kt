@@ -1,4 +1,4 @@
-﻿package com.madxbio97.syphonfilter
+package com.madxbio97.syphonfilter
 
 import android.app.AlertDialog
 import android.content.Intent
@@ -12,22 +12,17 @@ import java.io.FileOutputStream
 
 class MainActivity : SDLActivity() {
 
-    private var selectedCuePath: String? = null
-
-    private val selectCueLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) {
-            val path = copyUriToInternalStorage(uri)
-            selectedCuePath = path
-            saveGameImagePath(path)
-            showLaunchDialog()
-        }
+    companion object {
+        private const val REQUEST_CODE_CUE = 1001
     }
+
+    private var selectedCuePath: String? = null
 
     override fun getMainSharedObject(): String {
         return "libsyphon_filter.so"
     }
 
-    override fun getMainLibraries(): Array<String> {
+    override fun getLibraries(): Array<String> {
         return arrayOf("syphon_filter")
     }
 
@@ -41,11 +36,44 @@ class MainActivity : SDLActivity() {
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_CUE && resultCode == RESULT_OK) {
+            val uri = data?.data
+            if (uri != null) {
+                val path = copyUriToInternalStorage(uri)
+                selectedCuePath = path
+                saveGameImagePath(path)
+                showLaunchDialog()
+            }
+        }
+    }
+
+    private fun pickCueFile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(intent, REQUEST_CODE_CUE)
+    }
+
     override fun getArguments(): Array<String> {
         val args = mutableListOf<String>()
-        val cue = selectedCuePath ?: loadSavedGameImagePath()
+        var cue = selectedCuePath ?: loadSavedGameImagePath()
+        if (cue == null) {
+            val candidates = listOf(
+                "/sdcard/Download/game.cue",
+                "/sdcard/Download/Syphon Filter (v1.1).cue",
+                File(filesDir, "game.cue").absolutePath
+            )
+            for (candidate in candidates) {
+                if (File(candidate).exists()) {
+                    cue = candidate
+                    break
+                }
+            }
+        }
         if (cue != null) {
-            args.add("--game")
             args.add(cue)
         }
         return args.toTypedArray()
@@ -66,10 +94,10 @@ class MainActivity : SDLActivity() {
                     0 -> {
                         if (selectedCuePath == null) {
                             Toast.makeText(this, R.string.select_disc, Toast.LENGTH_LONG).show()
-                            selectCueLauncher.launch(arrayOf("*/*"))
+                            pickCueFile()
                         }
                     }
-                    1 -> selectCueLauncher.launch(arrayOf("*/*"))
+                    1 -> pickCueFile()
                     2 -> startActivity(Intent(this, SettingsActivity::class.java))
                     3 -> startActivity(Intent(this, DossierActivity::class.java))
                 }
@@ -92,7 +120,6 @@ class MainActivity : SDLActivity() {
         try {
             val list = assets.list(assetPath) ?: return
             if (list.isEmpty()) {
-                // It's a file
                 val targetFile = File(targetDir, File(assetPath).name)
                 if (!targetFile.exists()) {
                     assets.open(assetPath).use { input ->
@@ -104,7 +131,20 @@ class MainActivity : SDLActivity() {
             } else {
                 targetDir.mkdirs()
                 for (file in list) {
-                    copyAssetFolder("/", File(targetDir, file))
+                    val subPath = if (assetPath.isEmpty()) file else "$assetPath/$file"
+                    val subList = assets.list(subPath)
+                    if (subList.isNullOrEmpty()) {
+                        val targetFile = File(targetDir, file)
+                        if (!targetFile.exists()) {
+                            assets.open(subPath).use { input ->
+                                FileOutputStream(targetFile).use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                        }
+                    } else {
+                        copyAssetFolder(subPath, File(targetDir, file))
+                    }
                 }
             }
         } catch (e: Exception) {

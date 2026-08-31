@@ -4,7 +4,7 @@ if(POLICY CMP0174)
     cmake_policy(SET CMP0174 NEW)
 endif()
 
-project(SyphonFilterPC VERSION 0.1.0 LANGUAGES CXX)
+project(SyphonFilterPC VERSION 0.1.0 LANGUAGES C CXX)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -168,17 +168,39 @@ if(SF_ENABLE_PSYCROSS)
     endif()
 
     if(ANDROID)
+        set(SF_ENABLE_RELEASE_IPO OFF CACHE BOOL "" FORCE)
         find_library(GLES3_LIB GLESv3 REQUIRED)
         find_library(EGL_LIB EGL REQUIRED)
         find_library(ANDROID_LIB android REQUIRED)
         find_library(LOG_LIB log REQUIRED)
+        find_library(OPENSLES_LIB OpenSLES REQUIRED)
         if(NOT TARGET OpenGL::GL)
             add_library(OpenGL::GL INTERFACE IMPORTED)
             set_target_properties(OpenGL::GL PROPERTIES INTERFACE_LINK_LIBRARIES "${GLES3_LIB};${EGL_LIB}")
         endif()
-        find_package(SDL2 REQUIRED)
-        find_package(OpenAL REQUIRED)
-        find_package(FFMPEG REQUIRED)
+
+        include(FetchContent)
+        FetchContent_Declare(
+            SDL2
+            GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+            GIT_TAG release-2.28.5
+        )
+        set(SDL_TEST OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(SDL2)
+
+        FetchContent_Declare(
+            OpenAL
+            GIT_REPOSITORY https://github.com/kcat/openal-soft.git
+            GIT_TAG 1.23.1
+        )
+        set(ALSOFT_UTILS OFF CACHE BOOL "" FORCE)
+        set(ALSOFT_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(ALSOFT_TESTS OFF CACHE BOOL "" FORCE)
+        set(ALSOFT_INSTALL OFF CACHE BOOL "" FORCE)
+        set(LIBTYPE STATIC CACHE STRING "" FORCE)
+        FetchContent_MakeAvailable(OpenAL)
     else()
         find_package(SDL2 CONFIG REQUIRED)
         find_package(OpenAL CONFIG REQUIRED)
@@ -198,16 +220,26 @@ if(SF_ENABLE_PSYCROSS)
         target_compile_options(psycross_static PRIVATE /MP)
     endif()
 
-    add_library(sf_media
-        src/media/str_decoder.cpp
-    )
-    add_library(sf::media ALIAS sf_media)
-    target_include_directories(sf_media PUBLIC include)
-    target_include_directories(sf_media SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
-    target_link_directories(sf_media PRIVATE ${FFMPEG_LIBRARY_DIRS})
-    target_compile_features(sf_media PUBLIC cxx_std_20)
-    target_link_libraries(sf_media PRIVATE sf::core ${FFMPEG_LIBRARIES})
-    sf_set_project_warnings(sf_media)
+    if(NOT ANDROID)
+        add_library(sf_media
+            src/media/str_decoder.cpp
+        )
+        add_library(sf::media ALIAS sf_media)
+        target_include_directories(sf_media PUBLIC include)
+        target_include_directories(sf_media SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+        target_link_directories(sf_media PRIVATE ${FFMPEG_LIBRARY_DIRS})
+        target_compile_features(sf_media PUBLIC cxx_std_20)
+        target_link_libraries(sf_media PRIVATE sf::core ${FFMPEG_LIBRARIES})
+        sf_set_project_warnings(sf_media)
+    else()
+        add_library(sf_media
+            src/media/str_decoder_stub.cpp
+        )
+        add_library(sf::media ALIAS sf_media)
+        target_include_directories(sf_media PUBLIC include)
+        target_compile_features(sf_media PUBLIC cxx_std_20)
+        target_link_libraries(sf_media PRIVATE sf::core)
+    endif()
 
     add_library(sf_psycross_backend
         src/platform/psycross_audio_output.cpp
@@ -248,7 +280,11 @@ if(SF_ENABLE_PSYCROSS)
             apps/syphon_filter/launcher/shell.cpp
             apps/syphon_filter/main.cpp
         )
-        target_link_libraries(syphon_filter PRIVATE sf::psycross_backend SDL2::SDL2 ${ANDROID_LIB} ${LOG_LIB})
+        target_link_options(syphon_filter PRIVATE "-Wl,-z,max-page-size=16384")
+        target_link_libraries(syphon_filter PRIVATE
+            sf::psycross_backend
+            -Wl,--whole-archive SDL2-static -Wl,--no-whole-archive
+            ${ANDROID_LIB} ${LOG_LIB})
     else()
         add_executable(syphon_filter
             apps/syphon_filter/launcher/controls_page.cpp

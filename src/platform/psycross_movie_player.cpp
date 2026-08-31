@@ -12,6 +12,8 @@
 #include <PsyX/PsyX_globals.h>
 #include <PsyX/PsyX_public.h>
 #include <PsyX/PsyX_render.h>
+#include <SDL.h>
+#include <SDL_mouse.h>
 #include <SDL_timer.h>
 #include <psx/libetc.h>
 #include <psx/libgte.h>
@@ -565,8 +567,12 @@ void presentMovieFrame(
 std::uint16_t updateInput(PADRAW& pad, std::uint16_t& previous_buttons) {
     PsyX_UpdateInput();
     const auto buttons = readButtons(pad);
-    const auto pressed = static_cast<std::uint16_t>(~buttons & previous_buttons);
+    auto pressed = static_cast<std::uint16_t>(~buttons & previous_buttons);
     previous_buttons = buttons;
+    const auto mouse_buttons = SDL_GetMouseState(nullptr, nullptr);
+    if (mouse_buttons != 0) {
+        pressed |= skip_buttons;
+    }
     return pressed;
 }
 

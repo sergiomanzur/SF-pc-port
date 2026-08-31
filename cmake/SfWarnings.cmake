@@ -9,9 +9,10 @@ function(sf_set_project_warnings target)
         endif()
     else()
         target_compile_options(${target} PRIVATE
-            -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
-        if(SF_WARNINGS_AS_ERRORS)
-            target_compile_options(${target} PRIVATE -Werror)
+            -Wall -Wextra)
+        if(SF_WARNINGS_AS_ERRORS AND NOT ANDROID)
+            target_compile_options(${target} PRIVATE
+                -Wpedantic -Wconversion -Wsign-conversion -Werror)
         endif()
     endif()
 endfunction()

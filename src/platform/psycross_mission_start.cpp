@@ -310,9 +310,12 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
       drawMissionStartFade(fade_out_intensity);
       PsyX_EndScene();
     }
+    const auto any_mouse_pressed = (mouse_buttons != 0U);
     if (!fade_out_start &&
         gate.update((held & confirm_buttons) != 0U ||
-                        bound_actions[KeyboardMouseAction::interact],
+                        bound_actions[KeyboardMouseAction::interact] ||
+                        bound_actions[KeyboardMouseAction::fire] ||
+                        any_mouse_pressed,
                     text_animation_complete)) {
       fade_out_start = current_counter;
     }
