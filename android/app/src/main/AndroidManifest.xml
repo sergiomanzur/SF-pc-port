@@ -32,7 +32,7 @@
             android:screenOrientation="sensorLandscape"
             android:immersive="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.SyphonFilter.Fullscreen">
+            android:theme="@style/Theme.SyphonFilter.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

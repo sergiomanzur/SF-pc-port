@@ -11,4 +11,11 @@
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
+
+    <!-- Tactical Agency Splash Screen Theme -->
+    <style name="Theme.SyphonFilter.Splash" parent="Theme.SyphonFilter.Fullscreen">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:windowSplashScreenBackground">@color/sf_splash_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+    </style>
 </resources>

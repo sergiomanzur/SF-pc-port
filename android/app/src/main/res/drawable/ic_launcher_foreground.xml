@@ -4,10 +4,41 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Outer Targeting Brackets (Top-Left, Top-Right, Bottom-Left, Bottom-Right) -->
     <path
-        android:fillColor="#FF238636"
-        android:pathData="M54,24L74,44L54,64L34,44Z" />
+        android:strokeColor="#FF00E676"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="square"
+        android:pathData="M30,38 L30,30 L38,30 M78,30 L78,38 M70,30 L78,30 M30,70 L30,78 L38,78 M70,78 L78,78 L78,70" />
+
+    <!-- Circular HUD Reticle -->
+    <path
+        android:strokeColor="#8000E676"
+        android:strokeWidth="1.5"
+        android:pathData="M54,26 A28,28 0 1,0 54.01,26" />
+
+    <!-- Reticle Ticks -->
+    <path
+        android:strokeColor="#FFFFB300"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M54,20 L54,28 M54,80 L54,88 M20,54 L28,54 M80,54 L88,54" />
+
+    <!-- Target Acquisition Outer Diamond -->
+    <path
+        android:fillColor="#3300E676"
+        android:strokeColor="#FF00E676"
+        android:strokeWidth="2"
+        android:pathData="M54,34 L74,54 L54,74 L34,54 Z" />
+
+    <!-- Center Core Glow Diamond -->
+    <path
+        android:fillColor="#FFFFB300"
+        android:pathData="M54,45 L63,54 L54,63 L45,54 Z" />
+
+    <!-- Precision Crosshair Center Point -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M54,34L64,44L54,54L44,44Z" />
+        android:pathData="M54,50 L58,54 L54,58 L50,54 Z" />
 </vector>

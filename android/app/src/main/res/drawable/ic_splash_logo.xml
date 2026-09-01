@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="280dp"
+    android:height="280dp"
+    android:viewportWidth="280"
+    android:viewportHeight="280">
+
+    <!-- Glowing Background Glow Circle -->
+    <path
+        android:fillColor="#1500E676"
+        android:pathData="M140,40 A100,100 0 1,0 140.01,40" />
+
+    <!-- Outer Agency Corner Brackets -->
+    <path
+        android:strokeColor="#FF00E676"
+        android:strokeWidth="4"
+        android:strokeLineCap="square"
+        android:pathData="M60,90 L60,60 L90,60 M220,60 L220,90 M190,60 L220,60 M60,190 L60,220 L90,220 M190,220 L220,220 L220,190" />
+
+    <!-- Outer HUD Radar Ring -->
+    <path
+        android:strokeColor="#5500E676"
+        android:strokeWidth="2.5"
+        android:pathData="M140,55 A85,85 0 1,0 140.01,55" />
+
+    <!-- Inner Segmented Precision Reticle -->
+    <path
+        android:strokeColor="#FF00E676"
+        android:strokeWidth="3.5"
+        android:pathData="M140,75 A65,65 0 0,0 75,140 M140,205 A65,65 0 0,0 205,140" />
+
+    <!-- Tactical HUD Compass Ticks -->
+    <path
+        android:strokeColor="#FFFFB300"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M140,45 L140,65 M140,215 L140,235 M45,140 L65,140 M215,140 L235,140" />
+
+    <!-- Center Stealth Shield / Diamond -->
+    <path
+        android:fillColor="#4000E676"
+        android:strokeColor="#FF00E676"
+        android:strokeWidth="4"
+        android:pathData="M140,95 L185,140 L140,185 L95,140 Z" />
+
+    <!-- Glowing Core Matrix Diamond -->
+    <path
+        android:fillColor="#FFFFB300"
+        android:pathData="M140,120 L160,140 L140,160 L120,140 Z" />
+
+    <!-- Precision Point -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M140,132 L148,140 L140,148 L132,140 Z" />
+</vector>

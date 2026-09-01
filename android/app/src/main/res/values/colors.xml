@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="sf_bg_dark">#FF0E141B</color>
+    <color name="sf_splash_bg">#FF070A0E</color>
     <color name="sf_surface">#FF17212B</color>
     <color name="sf_primary">#FF3E82F7</color>
-    <color name="sf_accent">#FF00D26A</color>
+    <color name="sf_accent">#FF00E676</color>
+    <color name="sf_target_amber">#FFFFB300</color>
+    <color name="sf_crosshair_red">#FFFF3B30</color>
     <color name="sf_text_primary">#FFF0F4F8</color>
     <color name="sf_text_secondary">#FF9BA3AF</color>
 </resources>
